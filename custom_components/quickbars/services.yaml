@@ -1,0 +1,23 @@
+quickbar_toggle:
+  name: Toggle QuickBar
+  description: Open/close a QuickBar by alias (acts as a toggle on the Android app).
+  fields:
+    alias:
+      name: Alias
+      description: QuickBar alias defined in the Android TV app.
+      example: living_room
+      required: true
+      selector:
+        text:
+
+camera_toggle:
+  name: Toggle Camera PiP
+  description: Show/hide a camera PiP by alias (toggle handled by the Android app).
+  fields:
+    camera_alias:
+      name: Camera Alias
+      description: Camera alias defined in the Android TV app.
+      example: porch_cam
+      required: true
+      selector:
+        text:

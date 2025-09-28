@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "init": { "title": "QuickBars Editor", "description": "Choose an action" },
+      "entities": { "title": "Export Entities", "description": "Select entities to export to QuickBars" },
+      "pick_quickbar": { "title": "Choose QuickBar" },
+      "edit_quickbar": { "title": "Edit QuickBar" },
+      "user": { "title": "Add QuickBars TV", "description": "Enter the TV's IP and port" },
+      "pair": { "title": "Pair with TV", "description": "Type the 4-character code shown on your TV" }
+    },
+    "error": {
+      "tv_unreachable": "TV not reachable. Make sure the app is open and the pairing screen is visible.",
+      "bad_code": "Invalid code. Try again.",
+      "no_snapshot": "No snapshot available. Pull one first.",
+      "no_quickbars": "No QuickBars were found in the snapshot."
+    }
+  },
+  "options": {
+    "step": {
+      "init": { "title": "QuickBars Editor", "description": "Pull / Edit / Push" }
+    }
+  }
+}

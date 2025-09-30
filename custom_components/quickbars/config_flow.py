@@ -12,7 +12,7 @@ from .client import get_snapshot, post_snapshot
 import logging
 
 from .client import get_pair_code, confirm_pair
-from .client import ws_get_snapshot, ws_entities_replace, ws_put_snapshot
+from .client import ws_get_snapshot, ws_entities_replace, ws_put_snapshot, ws_entities_update
 from .constants import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -147,9 +147,9 @@ class QuickBarsOptionsFlow(OptionsFlow):
         if action == "export":
             return await self.async_step_expose()
         if action == "manage_saved":
-            return await self.async_step_manage_saved()
+            return await self.async_step_manage_saved_pick()
         if action == "manage_qb":
-            return await self.async_step_qb_manage()
+            return await self.async_step_qb_pick()
 
         return await self.async_step_menu()
     
@@ -205,23 +205,175 @@ class QuickBarsOptionsFlow(OptionsFlow):
             )
         
     # ---------- 2) Manage Saved Entities (placeholder for now) ----------
-    async def async_step_manage_saved(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        # Simple placeholder page: empty schema (Submit goes back)
-        if user_input is None:
+    async def async_step_manage_saved_pick(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Pick which saved entity to edit, then jump to your existing editor."""
+        # Always refresh snapshot so defaults are current
+        try:
+            self._snapshot = await ws_get_snapshot(self.hass, self.config_entry, timeout=15.0)
+        except Exception as e:
             return self.async_show_form(
-                step_id="manage_saved",
-                data_schema=vol.Schema({}),  # no fields
+                step_id="manage_saved_pick",
+                errors={"base": "tv_unreachable"},
+                description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+                data_schema=vol.Schema({}),
+            )
+
+        ents: List[Dict[str, Any]] = [
+            e for e in (self._snapshot.get("entities") or [])
+            if e.get("isSaved") and e.get("id")
+        ]
+        if not ents:
+            return self.async_show_form(
+                step_id="manage_saved_pick",
+                data_schema=vol.Schema({}),
                 description_placeholders={
                     "title": "Manage Saved Entities",
-                    "description": "Coming soon."
-                }
+                    "description": "No saved entities."
+                },
             )
-        return await self.async_step_menu()
+
+        def _label(e: Dict[str, Any]) -> str:
+            return f"{e.get('customName') or e.get('friendlyName') or e['id']} ({e['id']})"
+
+        options = [{"label": _label(e), "value": e["id"]} for e in ents]
+
+        # Default to previously selected or first
+        default_id = getattr(self, "_entity_id", None)
+        if default_id not in {e["id"] for e in ents}:
+            default_id = ents[0]["id"]
+
+        if user_input is None:
+            schema = vol.Schema({
+                vol.Required("entity", default=default_id): selector({
+                    "select": {"options": options, "mode": "dropdown"}
+                }),
+            })
+            return self.async_show_form(
+                step_id="manage_saved_pick",
+                data_schema=schema,
+                description_placeholders={
+                    "title": "Manage Saved Entities",
+                    "description": "Pick an entity to edit."
+                },
+            )
+
+        # Persist choice and jump into your existing editor (unchanged)
+        self._entity_id = user_input.get("entity", default_id)
+        return await self.async_step_manage_saved()
+    
+    async def async_step_manage_saved(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        # Must come from pick step; ensure snapshot & valid selection
+        if self._snapshot is None:
+            try:
+                self._snapshot = await ws_get_snapshot(self.hass, self.config_entry, timeout=15.0)
+            except Exception as e:
+                return self.async_show_form(
+                    step_id="manage_saved",
+                    errors={"base": "tv_unreachable"},
+                    description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+                    data_schema=vol.Schema({}),
+                )
+
+        ents: List[Dict[str, Any]] = [e for e in (self._snapshot.get("entities") or []) if e.get("isSaved") and e.get("id")]
+        by_id = {e["id"]: e for e in ents}
+        if not getattr(self, "_entity_id", None) or self._entity_id not in by_id:
+            # If someone lands here directly, bounce to pick
+            return await self.async_step_manage_saved_pick()
+
+        entity = by_id[self._entity_id]
+        cur_name = entity.get("customName") or entity.get("friendlyName") or ""
+
+        if user_input is None:
+            schema = vol.Schema({
+                vol.Required("display_name", default=cur_name): str,
+            })
+            return self.async_show_form(
+                step_id="manage_saved",
+                data_schema=schema,
+                description_placeholders={
+                    "title": f"Edit Saved Entity",
+                    "description": f"Editing: {entity.get('customName') or entity.get('friendlyName') or entity['id']}"
+                },
+            )
+
+        # Save
+        new_name = user_input.get("display_name", cur_name)
+        try:
+            await ws_entities_update(
+                self.hass, self.config_entry,
+                updates=[{"id": self._entity_id, "customName": new_name}],
+                timeout=15.0
+            )
+            return self.async_create_entry(title="", data=dict(self.config_entry.options))
+        except Exception as e:
+            _LOGGER.exception("entities_update failed")
+            return self.async_show_form(
+                step_id="manage_saved",
+                data_schema=vol.Schema({vol.Required("display_name", default=new_name): str}),
+                errors={"base": "tv_unreachable"},
+                description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+            )
+
 
     # ---------- 3) Manage QuickBars ----------
+    async def async_step_qb_pick(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Pick which QuickBar to edit, then jump to your existing editor."""
+        # Always refresh snapshot so defaults are current
+        try:
+            self._snapshot = await ws_get_snapshot(self.hass, self.config_entry, timeout=15.0)
+        except Exception as e:
+            return self.async_show_form(
+                step_id="qb_pick",
+                errors={"base": "tv_unreachable"},
+                description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+                data_schema=vol.Schema({}),
+            )
+
+        qb_list: List[Dict[str, Any]] = list(self._snapshot.get("quick_bars", []))
+        if not qb_list:
+            return self.async_show_form(
+                step_id="qb_pick",
+                data_schema=vol.Schema({}),
+                description_placeholders={
+                    "title": "Manage QuickBars",
+                    "description": "No QuickBars found."
+                },
+            )
+
+        options = []
+        for idx, qb in enumerate(qb_list):
+            name = qb.get("name") or f"QuickBar {idx+1}"
+            options.append({"label": name, "value": str(idx)})
+
+        # Default to previously selected or first
+        default_idx = self._qb_index if isinstance(self._qb_index, int) else 0
+        if default_idx < 0 or default_idx >= len(qb_list):
+            default_idx = 0
+
+        if user_input is None:
+            schema = vol.Schema({
+                vol.Required("qb_index", default=str(default_idx)): selector({
+                    "select": {"options": options, "mode": "dropdown"}
+                }),
+            })
+            return self.async_show_form(
+                step_id="qb_pick",
+                data_schema=schema,
+                description_placeholders={
+                    "title": "Manage QuickBars",
+                    "description": "Pick a QuickBar to edit."
+                },
+            )
+
+        # Persist choice and jump into your existing editor (unchanged)
+        try:
+            self._qb_index = int(user_input.get("qb_index", str(default_idx)))
+        except Exception:
+            self._qb_index = default_idx
+        return await self.async_step_qb_manage()
+
     async def async_step_qb_manage(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Single screen: choose a QuickBar and edit it."""
-        # Ensure we have a snapshot
+        # Must come from pick step; ensure snapshot & valid selection
         if self._snapshot is None:
             try:
                 self._snapshot = await ws_get_snapshot(self.hass, self.config_entry, timeout=15.0)
@@ -235,95 +387,17 @@ class QuickBarsOptionsFlow(OptionsFlow):
 
         qb_list: List[Dict[str, Any]] = list(self._snapshot.get("quick_bars", []))
         if not qb_list:
-            # Nothing to edit; bounce back to main menu
-            return await self.async_step_menu()
+            return await self.async_step_qb_pick()
 
-        # Build QuickBar options (string values)
-        options = []
-        for idx, qb in enumerate(qb_list):
-            name = qb.get("name") or f"QuickBar {idx+1}"
-            options.append({"label": name, "value": str(idx)})
+        if not isinstance(self._qb_index, int) or self._qb_index < 0 or self._qb_index >= len(qb_list):
+            return await self.async_step_qb_pick()
 
-        # Default selected index (keep last chosen; else 0)
-        if self._qb_index is None:
-            self._qb_index = 0
-
-        # If user submitted, we may be either changing selection OR saving changes
-        if user_input is not None:
-            # If the user changed which QuickBar is selected, update index and re-render with its values
-            new_idx = int(user_input.get("choose_quickbar", str(self._qb_index)))
-            if new_idx != self._qb_index:
-                self._qb_index = new_idx
-                # fall through to render the form prefilled for the newly chosen QB (no save yet)
-            else:
-                # We are saving changes for the current QB
-                qb_list = list(self._snapshot.get("quick_bars", []))
-                if self._qb_index < 0 or self._qb_index >= len(qb_list):
-                    # Reprompt if out of bounds
-                    self._qb_index = 0
-                    user_input = None
-                else:
-                    qb = qb_list[self._qb_index]
-
-                    # Entities list (only saved)
-                    all_entities: List[Dict[str, Any]] = list(self._snapshot.get("entities", []))
-                    saved_entities = [e for e in all_entities if e.get("isSaved") and e.get("id")]
-                    saved_ids: List[str] = [e["id"] for e in saved_entities]
-                    requested = list(user_input.get("saved_entities") or qb.get("savedEntityIds") or [])
-
-                    # Normalize: subset + unique + preserve user order
-                    seen = set()
-                    normalized = []
-                    for eid in requested:
-                        if eid in saved_ids and eid not in seen:
-                            normalized.append(eid)
-                            seen.add(eid)
-
-                    # Apply edits
-                    qb["name"] = user_input.get("quickbar_name", qb.get("name") or "")
-                    qb["savedEntityIds"] = normalized
-                    qb["showNameInOverlay"] = bool(user_input.get("show_name_on_overlay", qb.get("showNameInOverlay", True)))
-                    qb["showTimeOnQuickBar"] = bool(user_input.get("show_time_on_quickbar", qb.get("showTimeOnQuickBar", True)))
-                    qb["haTriggerAlias"] = user_input.get("ha_trigger_alias", qb.get("haTriggerAlias") or "")
-                    qb["autoCloseQuickBarDomains"] = list(user_input.get("auto_close_domains") or qb.get("autoCloseQuickBarDomains") or [])
-
-                    # Push ONLY quick_bars back
-                    try:
-                        payload = {"quick_bars": self._snapshot.get("quick_bars", [])}
-                        await ws_put_snapshot(self.hass, self.config_entry, payload, timeout=20.0)
-                        return self.async_create_entry(title="", data=dict(self.config_entry.options))
-                    except Exception as e:
-                        _LOGGER.exception("quickbar update failed")
-                        # Fall through to redisplay form with error
-                        return self.async_show_form(
-                            step_id="qb_manage",
-                            data_schema=self._qb_schema(options, qb, self._snapshot),
-                            errors={"base": "tv_unreachable"},
-                            description_placeholders={"hint": f"{type(e).__name__}: {e}"},
-                        )
-
-        # ----- Render form (initial or after selecting a different QB) -----
-        # Clamp index and load chosen QB
-        if self._qb_index < 0 or self._qb_index >= len(qb_list):
-            self._qb_index = 0
         qb = qb_list[self._qb_index]
 
-        return self.async_show_form(
-            step_id="qb_manage",
-            data_schema=self._qb_schema(options, qb, self._snapshot),
-            description_placeholders={
-                "title": "Manage QuickBars",
-                "description": (
-                    "Pick a QuickBar, then edit its settings.\n\n"
-                    "Tip: The order of 'Saved Entities' follows the order you select them."
-                ),
-            },
-        )
-
-    def _qb_schema(self, qb_options: List[Dict[str, Any]], qb: Dict[str, Any], snapshot: Dict[str, Any]) -> vol.Schema:
-        """Build the form schema for Manage QuickBars."""
-        all_entities: List[Dict[str, Any]] = list(snapshot.get("entities", []))
+        # SAVED entities for options (friendly labels)
+        all_entities: List[Dict[str, Any]] = list(self._snapshot.get("entities", []))
         saved_entities = [e for e in all_entities if e.get("isSaved") and e.get("id")]
+        saved_ids: List[str] = [e["id"] for e in saved_entities]
 
         def _label_for(e: Dict[str, Any]) -> str:
             name = e.get("customName") or e.get("friendlyName") or e.get("id")
@@ -331,6 +405,7 @@ class QuickBarsOptionsFlow(OptionsFlow):
 
         saved_options = [{"label": _label_for(e), "value": e["id"]} for e in saved_entities]
 
+        # Current values
         cur_name = qb.get("name") or ""
         cur_saved = list(qb.get("savedEntityIds") or [])
         cur_show_name = bool(qb.get("showNameInOverlay", True))
@@ -338,29 +413,83 @@ class QuickBarsOptionsFlow(OptionsFlow):
         cur_alias = qb.get("haTriggerAlias") or ""
         cur_domains = list(qb.get("autoCloseQuickBarDomains") or [])
 
-        # NOTE: keys here become the labels in UI
-        return vol.Schema({
-            vol.Required("choose_quickbar", default=str(self._qb_index)): selector({
-                "select": {"options": qb_options, "mode": "dropdown"}
-            }),
-            vol.Required("quickbar_name", default=cur_name): str,
-            vol.Optional("saved_entities", default=cur_saved): selector({
-                "select": {"options": saved_options, "multiple": True}
-            }),
-            vol.Required("show_name_on_overlay", default=cur_show_name): selector({"boolean": {}}),
-            vol.Required("show_time_on_quickbar", default=cur_show_time): selector({"boolean": {}}),
-            vol.Optional("ha_trigger_alias", default=cur_alias): str,
-            vol.Optional("auto_close_domains", default=cur_domains): selector({
-                "select": {
-                    "options": [
-                        "light","switch","button","input_boolean","input_button",
-                        "script","scene",
-                        "automation","camera",
-                    ],
-                    "multiple": True
-                }
-            }),
-        })
+        if user_input is None:
+            schema = vol.Schema({
+                vol.Required("quickbar_name", default=cur_name): str,
+                vol.Optional("saved_entities", default=cur_saved): selector({
+                    "select": {"options": saved_options, "multiple": True}
+                }),
+                vol.Required("show_name_on_overlay", default=cur_show_name): selector({"boolean": {}}),
+                vol.Required("show_time_on_quickbar", default=cur_show_time): selector({"boolean": {}}),
+                vol.Optional("ha_trigger_alias", default=cur_alias): str,
+                vol.Optional("auto_close_domains", default=cur_domains): selector({
+                    "select": {
+                        "options": [
+                            "light","switch","button","input_boolean","input_button",
+                            "script","scene",
+                            "automation","camera"
+                        ],
+                        "multiple": True
+                    }
+                }),
+            })
+            return self.async_show_form(
+                step_id="qb_manage",
+                data_schema=schema,
+                description_placeholders={
+                    "title": "Manage QuickBar",
+                    "description": "Adjust settings and submit to save. Use Back to pick a different QuickBar."
+                },
+            )
+
+        # Normalize selection order & subset
+        requested = list(user_input.get("saved_entities") or cur_saved)
+        seen = set()
+        normalized = []
+        for eid in requested:
+            if eid in saved_ids and eid not in seen:
+                normalized.append(eid)
+                seen.add(eid)
+
+        # Apply edits in memory
+        qb["name"] = user_input.get("quickbar_name", cur_name)
+        qb["savedEntityIds"] = normalized
+        qb["showNameInOverlay"] = bool(user_input.get("show_name_on_overlay", cur_show_name))
+        qb["showTimeOnQuickBar"] = bool(user_input.get("show_time_on_quickbar", cur_show_time))
+        qb["haTriggerAlias"] = user_input.get("ha_trigger_alias", cur_alias)
+        qb["autoCloseQuickBarDomains"] = list(user_input.get("auto_close_domains") or cur_domains)
+
+        # Push ONLY quick_bars back
+        try:
+            payload = {"quick_bars": self._snapshot.get("quick_bars", [])}
+            await ws_put_snapshot(self.hass, self.config_entry, payload, timeout=20.0)
+            return self.async_create_entry(title="", data=dict(self.config_entry.options))
+        except Exception as e:
+            _LOGGER.exception("quickbar update failed")
+            # Re-show with current values
+            schema = vol.Schema({
+                vol.Required("quickbar_name", default=qb.get("name") or cur_name): str,
+                vol.Optional("saved_entities", default=qb.get("savedEntityIds") or cur_saved): selector({
+                    "select": {"options": saved_options, "multiple": True}
+                }),
+                vol.Required("show_name_on_overlay", default=qb.get("showNameInOverlay", cur_show_name)): selector({"boolean": {}}),
+                vol.Required("show_time_on_quickbar", default=qb.get("showTimeOnQuickBar", cur_show_time)): selector({"boolean": {}}),
+                vol.Optional("ha_trigger_alias", default=qb.get("haTriggerAlias") or cur_alias): str,
+                vol.Optional("auto_close_domains", default=qb.get("autoCloseQuickBarDomains") or cur_domains): selector({
+                    "select": {"options": [
+                        "light","switch","button","fan","input_boolean","input_button",
+                        "script","scene","climate","cover","lock","media_player",
+                        "automation","camera","sensor","binary_sensor",
+                    ], "multiple": True}
+                }),
+            })
+            return self.async_show_form(
+                step_id="qb_manage",
+                data_schema=schema,
+                errors={"base": "tv_unreachable"},
+                description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+            )
+
 
     async def async_step_done(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         return self.async_create_entry(title="", data=dict(self.config_entry.options))

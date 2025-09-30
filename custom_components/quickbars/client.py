@@ -170,6 +170,39 @@ async def ws_entities_replace(
     finally:
         unsub()
 
+async def ws_entities_update(
+    hass,
+    entry,
+    updates: List[Dict[str, Any]],   # each item: {"id": "...", "customName": "...", ...}
+    timeout: float = 20.0,
+) -> Dict[str, Any]:
+    cid = secrets.token_urlsafe(8)
+    fut = hass.loop.create_future()
+
+    def _cb(event):
+        data = event.data or {}
+        if data.get("id") != entry.data.get("id"): return
+        if data.get("cid") != cid: return
+        if not fut.done(): fut.set_result(data)
+
+    unsub = hass.bus.async_listen(EVENT_RES, _cb)
+    try:
+        hass.bus.async_fire(
+            EVENT_REQ,
+            {
+                "id": entry.data.get("id"),
+                "action": "entities_update",
+                "cid": cid,
+                "payload": {"entities": updates},
+            },
+        )
+        res = await asyncio.wait_for(fut, timeout)
+        if not res.get("ok"):
+            raise RuntimeError(f"TV replied error: {res}")
+        return res.get("payload") or {}
+    finally:
+        unsub()
+
 async def ws_put_snapshot(hass: HomeAssistant, entry: ConfigEntry, snapshot: dict[str, Any], timeout: float = 20.0) -> None:
     cid = secrets.token_urlsafe(8)
     fut: asyncio.Future = hass.loop.create_future()

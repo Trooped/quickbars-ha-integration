@@ -1,10 +1,14 @@
 from __future__ import annotations
-from typing import Any, Optional, Mapping
+from typing import Any, Optional, Mapping, Dict, List
 import aiohttp
 import logging
 import time
+import asyncio
+import secrets
 
 _LOGGER = logging.getLogger(__name__)
+from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry
 
 # ---------- Connectivity ----------
 
@@ -101,3 +105,89 @@ async def post_snapshot(host: str, port: int, snapshot: dict[str, Any]) -> None:
     async with aiohttp.ClientSession() as s:
         async with s.post(url, json=snapshot, timeout=20) as r:
             r.raise_for_status()
+
+
+
+
+
+EVENT_REQ = "quickbars_config_request"
+EVENT_RES = "quickbars_config_response"
+
+async def ws_get_snapshot(hass: HomeAssistant, entry: ConfigEntry, timeout: float = 15.0) -> dict[str, Any]:
+    cid = secrets.token_urlsafe(8)
+    fut = hass.loop.create_future()
+    def _cb(event):
+        data = event.data or {}
+        if data.get("id") != entry.data.get("id"): return
+        if data.get("cid") != cid: return
+        if not fut.done(): fut.set_result(data)
+    unsub = hass.bus.async_listen(EVENT_RES, _cb)
+    try:
+        hass.bus.async_fire(EVENT_REQ, {"id": entry.data.get("id"), "action": "get_snapshot", "cid": cid})
+        res = await asyncio.wait_for(fut, timeout)
+        if not res.get("ok"):
+            raise RuntimeError(f"TV replied error: {res}")
+        return res.get("payload") or {}
+    finally:
+        unsub()
+
+async def ws_entities_replace(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    entity_ids: list[str],
+    names: Optional[Dict[str, str]] = None,
+    custom_names: Optional[Dict[str, str]] = None,
+    timeout: float = 25.0,
+) -> dict[str, Any]:
+    cid = secrets.token_urlsafe(8)
+    fut = hass.loop.create_future()
+
+    def _cb(event):
+        data = event.data or {}
+        if data.get("id") != entry.data.get("id"):
+            return
+        if data.get("cid") != cid:
+            return
+        if not fut.done():
+            fut.set_result(data)
+
+    unsub = hass.bus.async_listen(EVENT_RES, _cb)
+    try:
+        payload: Dict[str, Any] = {"entity_ids": entity_ids}
+        if names:
+            payload["names"] = names
+        if custom_names:
+            payload["custom_names"] = custom_names
+
+        hass.bus.async_fire(
+            EVENT_REQ,
+            {"id": entry.data.get("id"), "action": "entities_replace", "cid": cid, "payload": payload},
+        )
+        res = await asyncio.wait_for(fut, timeout)
+        if not res.get("ok"):
+            raise RuntimeError(f"TV replied error: {res}")
+        return res.get("payload") or {}
+    finally:
+        unsub()
+
+async def ws_put_snapshot(hass: HomeAssistant, entry: ConfigEntry, snapshot: dict[str, Any], timeout: float = 20.0) -> None:
+    cid = secrets.token_urlsafe(8)
+    fut: asyncio.Future = hass.loop.create_future()
+
+    def _cb(event):
+        data = event.data or {}
+        if data.get("id") != entry.data.get("id"):
+            return
+        if data.get("cid") != cid:
+            return
+        if not fut.done():
+            fut.set_result(data)
+
+    unsub = hass.bus.async_listen(EVENT_RES, _cb)
+    try:
+        hass.bus.async_fire(EVENT_REQ, {"id": entry.data.get("id"), "action": "put_snapshot", "cid": cid, "payload": snapshot})
+        res = await asyncio.wait_for(fut, timeout)
+        if not res.get("ok"):
+            raise RuntimeError(f"TV replied error: {res}")
+    finally:
+        unsub()

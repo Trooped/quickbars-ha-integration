@@ -83,7 +83,17 @@ class _Presence:
             await self._browser.async_cancel()
             self._browser = None
 
-    def _on_change(self, zc, service_type, name, state_change) -> None:
+    def _on_change(self, *args, **kwargs) -> None:
+        """Compat handler for zeroconf callbacks (positional or keyword)."""
+        if kwargs:
+            service_type = kwargs.get("service_type")
+            name = kwargs.get("name")
+            state_change = kwargs.get("state_change")
+        else:
+            # Old style: (zeroconf, service_type, name, state_change)
+            _, service_type, name, state_change = args
+
+        # Defer real work to an async task
         self.hass.async_create_task(self._handle_change(service_type, name, state_change))
 
     async def _handle_change(self, service_type: str, name: str, state_change: ServiceStateChange) -> None:

@@ -77,21 +77,71 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(title=qb_name, data={CONF_HOST: self._host, CONF_PORT: qb_port, "id": qb_id})
 
     # -------- Zeroconf path --------
-    async def async_step_zeroconf(self, discovery_info: dict[str, Any]) -> FlowResult:
-        host = discovery_info["host"]
-        port = discovery_info["port"]
-        props = dict(discovery_info.get("properties") or {})
-        unique = props.get("id") or discovery_info.get("hostname") or host
-        _LOGGER.debug("step_zeroconf: host=%s port=%s props=%s unique=%s", host, port, props, unique)
+    async def async_step_zeroconf(self, discovery_info) -> FlowResult:
+        """Handle discovery from Zeroconf and jump into the pairing (code) step."""
+        # Support both object and dict shapes
+        if hasattr(discovery_info, "host"):
+            host = discovery_info.host
+            port = discovery_info.port
+            props_raw = dict(discovery_info.properties or {})
+            hostname = getattr(discovery_info, "hostname", None)
+            name = getattr(discovery_info, "name", None)
+        else:
+            host = discovery_info.get("host")
+            port = discovery_info.get("port")
+            props_raw = dict(discovery_info.get("properties") or {})
+            hostname = discovery_info.get("hostname")
+            name = discovery_info.get("name")
 
-        await self.async_set_unique_id(unique)
-        self._abort_if_unique_id_configured(updates={CONF_HOST: host, CONF_PORT: port, "id": unique})
+        # Decode bytes -> str
+        props: dict[str, str] = {}
+        for k, v in (props_raw or {}).items():
+            key = k.decode() if isinstance(k, (bytes, bytearray)) else str(k)
+            val = v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+            props[key] = val
 
-        self.context["title_placeholders"] = {"name": props.get("name") or "QuickBars TV"}
-        return self.async_create_entry(
-            title=props.get("name") or "QuickBars TV",
-            data={CONF_HOST: host, CONF_PORT: port, "id": unique},
-        )
+        # Prefer TXT 'id' if present; otherwise fall back to hostname/host
+        unique = (props.get("id") or hostname or host or "").strip()
+        title = props.get("name") or "QuickBars TV"
+
+        # If we don’t have host/port, abort quietly
+        if not host or not port:
+            return self.async_abort(reason="unknown")
+
+        # If already configured, update host/port and abort (no duplicate flows)
+        if unique:
+            await self.async_set_unique_id(unique)
+            self._abort_if_unique_id_configured(
+                updates={CONF_HOST: host, CONF_PORT: port, "id": unique}
+            )
+
+        # Save endpoint for the pairing step
+        self._host, self._port = host, port
+        self.context["title_placeholders"] = {"name": title}
+
+        # Request a pairing code/session id, same as in step_user
+        try:
+            resp = await get_pair_code(self._host, self._port)
+            self._pair_sid = resp.get("sid")
+            _LOGGER.debug(
+                "zeroconf: got pair sid=%s (masked)",
+                (self._pair_sid[:3]+"***"+self._pair_sid[-2:]) if self._pair_sid else "<none>"
+            )
+        except Exception as e:
+            _LOGGER.exception("zeroconf: get_pair_code failed for %s:%s", self._host, self._port)
+            # Fall back to manual host:port form so the user can retry
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({
+                    vol.Required(CONF_HOST, default=self._host): str,
+                    vol.Required(CONF_PORT, default=self._port): int,
+                }),
+                errors={"base": "tv_unreachable"},
+                description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+            )
+
+        # Continue into the same code entry step as manual flow
+        return await self.async_step_pair()
     
     @staticmethod
     @callback

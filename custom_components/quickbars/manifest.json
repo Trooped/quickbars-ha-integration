@@ -8,7 +8,8 @@
     "codeowners": ["@Trooped"],
     "config_flow": true,
      "zeroconf": [
-    { "type": "_quickbars._tcp.local.", "properties": { "api": "1" } }
+      { "type": "_quickbars._tcp.local." },
+      { "type": "_quickbars._tcp.local.", "properties": { "api": "1" } }
   ],
     "integration_type": "hub",
     "iot_class": "local_polling"

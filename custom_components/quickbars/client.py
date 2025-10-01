@@ -224,3 +224,35 @@ async def ws_put_snapshot(hass: HomeAssistant, entry: ConfigEntry, snapshot: dic
             raise RuntimeError(f"TV replied error: {res}")
     finally:
         unsub()
+
+
+async def ws_ping(hass: HomeAssistant, entry: ConfigEntry, timeout: float = 5.0) -> bool:
+    """Check connectivity using WebSocket (event bus)."""
+    cid = secrets.token_urlsafe(8)
+    fut = hass.loop.create_future()
+    
+    def _cb(event):
+        data = event.data or {}
+        if data.get("id") != entry.data.get("id"):
+            return
+        if data.get("cid") != cid:
+            return
+        if not fut.done():
+            fut.set_result(data)
+    
+    unsub = hass.bus.async_listen(EVENT_RES, _cb)
+    try:
+        hass.bus.async_fire(EVENT_REQ, {
+            "id": entry.data.get("id"), 
+            "action": "ping", 
+            "cid": cid
+        })
+        res = await asyncio.wait_for(fut, timeout)
+        return res.get("ok", False)
+    except asyncio.TimeoutError:
+        return False
+    except Exception:
+        _LOGGER.exception("ws_ping failed")
+        return False
+    finally:
+        unsub()

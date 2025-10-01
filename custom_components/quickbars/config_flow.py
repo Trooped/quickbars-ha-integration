@@ -119,17 +119,30 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._host, self._port = host, port
         self.context["title_placeholders"] = {"name": title}
 
-        # Request a pairing code/session id, same as in step_user
+        # Add confirmation step before starting pairing
+        return self.async_show_form(
+            step_id="zeroconf_confirm",
+            data_schema=vol.Schema({}),  # no fields; just a Continue button
+            description_placeholders={"hint": f"Prepare TV for pairing with {title}."},
+        )
+    
+    async def async_step_zeroconf_confirm(self, user_input=None) -> FlowResult:
+        """Called after the user clicks the discovered tile and presses Continue."""
+        if user_input is None:
+            # If HA re-renders the form without submit, just show it again.
+            return self.async_show_form(step_id="zeroconf_confirm", data_schema=vol.Schema({}))
+
+        # NOW it’s user-initiated: request a code and jump to pair step
         try:
             resp = await get_pair_code(self._host, self._port)
             self._pair_sid = resp.get("sid")
             _LOGGER.debug(
-                "zeroconf: got pair sid=%s (masked)",
-                (self._pair_sid[:3]+"***"+self._pair_sid[-2:]) if self._pair_sid else "<none>"
+                "zeroconf_confirm: got pair sid=%s (masked)",
+                (self._pair_sid[:3] + "***" + self._pair_sid[-2:]) if self._pair_sid else "<none>",
             )
         except Exception as e:
-            _LOGGER.exception("zeroconf: get_pair_code failed for %s:%s", self._host, self._port)
-            # Fall back to manual host:port form so the user can retry
+            _LOGGER.exception("zeroconf_confirm: get_pair_code failed for %s:%s", self._host, self._port)
+            # Fall back to manual host:port
             return self.async_show_form(
                 step_id="user",
                 data_schema=vol.Schema({
@@ -140,7 +153,6 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 description_placeholders={"hint": f"{type(e).__name__}: {e}"},
             )
 
-        # Continue into the same code entry step as manual flow
         return await self.async_step_pair()
     
     @staticmethod
@@ -163,7 +175,6 @@ class QuickBarsOptionsFlow(OptionsFlow):
         self._qb_index: int | None = None   # which quickbar is being edited
 
 
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         # Pull snapshot over WS
         try:
@@ -173,34 +184,40 @@ class QuickBarsOptionsFlow(OptionsFlow):
                 step_id="init",
                 errors={"base": "tv_unreachable"},
                 description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+                data_schema=vol.Schema({})  # Add empty schema
             )
         # Go to expose UI
         return await self.async_step_menu()
     
     async def async_step_menu(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is None:
+            # Use a simpler dropdown selector instead of buttons
             schema = vol.Schema({
-                vol.Required("action"): selector({
-                    "select": {
-                        "options": [
-                            {"label": "Export / remove saved entities", "value": "export"},
-                            {"label": "Manage Saved Entities", "value": "manage_saved"},
-                            {"label": "Manage QuickBars", "value": "manage_qb"},
-                        ],
-                        "mode": "dropdown"
-                    }
+                vol.Required("action"): vol.In({
+                    "export": "Add / Remove Saved Entities",
+                    "manage_saved": "Manage Saved Entities",
+                    "manage_qb": "Manage QuickBars"
                 })
             })
-            return self.async_show_form(step_id="menu", data_schema=schema)
+            return self.async_show_form(
+                step_id="menu", 
+                data_schema=schema,
+                description_placeholders={
+                    "title": "QuickBars Configuration",
+                    "description": "What would you like to configure?"
+                }
+            )
 
-        action = user_input["action"]
+        # Handle selected action
+        action = user_input.get("action", "")
         if action == "export":
             return await self.async_step_expose()
-        if action == "manage_saved":
+        elif action == "manage_saved":
             return await self.async_step_manage_saved_pick()
-        if action == "manage_qb":
+        elif action == "manage_qb":
             return await self.async_step_qb_pick()
-
+        
+        # Fallback
         return await self.async_step_menu()
     
     # ---------- 1) Export/remove saved entities ----------
@@ -219,7 +236,7 @@ class QuickBarsOptionsFlow(OptionsFlow):
                 data_schema=schema,
                 description_placeholders={
                     "title": "Saved entities",
-                    "description": "Pick which entities are saved in the TV app"
+                    "description": "Select which entities are saved in the QuickBars app."
                 }
             )
         
@@ -272,7 +289,9 @@ class QuickBarsOptionsFlow(OptionsFlow):
             e for e in (self._snapshot.get("entities") or [])
             if e.get("isSaved") and e.get("id")
         ]
+
         if not ents:
+            # Nothing to manage; send them back to the menu gracefully
             return self.async_show_form(
                 step_id="manage_saved_pick",
                 data_schema=vol.Schema({}),
@@ -292,23 +311,24 @@ class QuickBarsOptionsFlow(OptionsFlow):
         if default_id not in {e["id"] for e in ents}:
             default_id = ents[0]["id"]
 
+
         if user_input is None:
             schema = vol.Schema({
                 vol.Required("entity", default=default_id): selector({
                     "select": {"options": options, "mode": "dropdown"}
-                }),
+                })
             })
             return self.async_show_form(
                 step_id="manage_saved_pick",
                 data_schema=schema,
                 description_placeholders={
                     "title": "Manage Saved Entities",
-                    "description": "Pick an entity to edit."
+                    "description": "Pick an entity to edit.",
                 },
             )
 
-        # Persist choice and jump into your existing editor (unchanged)
-        self._entity_id = user_input.get("entity", default_id)
+        # Persist selection and continue to the editor
+        self._entity_id = user_input.get("entity")
         return await self.async_step_manage_saved()
     
     async def async_step_manage_saved(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -402,7 +422,7 @@ class QuickBarsOptionsFlow(OptionsFlow):
 
         if user_input is None:
             schema = vol.Schema({
-                vol.Required("qb_index", default=str(default_idx)): selector({
+                vol.Required("quickbar", default=str(default_idx)): selector({
                     "select": {"options": options, "mode": "dropdown"}
                 }),
             })
@@ -411,13 +431,13 @@ class QuickBarsOptionsFlow(OptionsFlow):
                 data_schema=schema,
                 description_placeholders={
                     "title": "Manage QuickBars",
-                    "description": "Pick a QuickBar to edit."
+                    "description": "Select a QuickBar to edit."
                 },
             )
 
         # Persist choice and jump into your existing editor (unchanged)
         try:
-            self._qb_index = int(user_input.get("qb_index", str(default_idx)))
+            self._qb_index = int(user_input.get("quickbar", str(default_idx)))
         except Exception:
             self._qb_index = default_idx
         return await self.async_step_qb_manage()

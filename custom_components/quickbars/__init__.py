@@ -16,12 +16,12 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers import device_registry as dr
 from homeassistant.data_entry_flow import FlowResult
-
+import asyncio
 from homeassistant.components import zeroconf as ha_zc
 from zeroconf.asyncio import AsyncServiceBrowser
 from zeroconf import ServiceStateChange
 
-from .client import get_snapshot, post_snapshot, ping
+from .client import get_snapshot, post_snapshot, ping, ws_ping
 from .constants import DOMAIN  # DOMAIN = "quickbars"
 
 
@@ -54,13 +54,17 @@ class QuickBarsCoordinator(DataUpdateCoordinator[bool]):
         )
 
     async def _async_update_data(self) -> bool:
-        host = self.entry.data[CONF_HOST]
-        port = self.entry.data[CONF_PORT]
-        ok = await ping(host, port)
-        if not ok:
-            # Raising -> coordinator.last_update_success becomes False
-            raise UpdateFailed(f"Ping failed for {host}:{port}")
-        return True
+        """Single-shot WS connectivity check (no HTTP)."""
+        try:
+            ok = await ws_ping(self.hass, self.entry, timeout=5.0)
+            if not ok:
+                raise UpdateFailed()
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # Make the integration show as unavailable/failed, HA will retry later
+            raise UpdateFailed(f"WS ping error: {e}") from e
 
 
 class _Presence:
@@ -128,6 +132,10 @@ class _Presence:
             _LOGGER.debug("Presence: updating host/port -> %s:%s", host, port)
             self.hass.config_entries.async_update_entry(self.entry, data=new_data)
 
+            coordinator = self.hass.data[DOMAIN][self.entry.entry_id].get("coordinator")
+            if coordinator:
+                self.hass.async_create_task(coordinator.async_request_refresh())
+
 
 async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
     """Register two tiny services that just fire quickbars.open."""
@@ -163,13 +171,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
     coordinator = QuickBarsCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
 
-    # store
     hass.data[DOMAIN][entry.entry_id].update(
         presence=presence,
         coordinator=coordinator,
     )
-
-    # NOTE: we no longer forward any platforms (no binary_sensor)
     return True
 
 

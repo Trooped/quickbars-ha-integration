@@ -6,7 +6,11 @@
       "pick_quickbar": { "title": "Choose QuickBar" },
       "edit_quickbar": { "title": "Edit QuickBar" },
       "user": { "title": "Add QuickBars TV", "description": "Enter the TV's IP and port" },
-      "pair": { "title": "Pair with TV", "description": "Type the 4-character code shown on your TV" }
+      "pair": { "title": "Pair with TV", "description": "Type the 4-character code shown on your TV" },
+      "zeroconf_confirm": {
+        "title": "Pair {name}",
+        "description": "We found a QuickBars TV app via Zeroconf.\n\n**Device ID:** {id}\n**IP:** {host}:{port}\n**API:** v{api}\n**App:** {app_version}\n\nClick **Continue** to show a pairing code on the TV and complete setup."
+      }
     },
     "error": {
       "tv_unreachable": "TV not reachable. Make sure the app is open and the pairing screen is visible.",

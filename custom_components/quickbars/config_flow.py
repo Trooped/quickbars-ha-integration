@@ -3,7 +3,7 @@ from typing import Any, List, Dict
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.config_entries import OptionsFlow, ConfigEntry
+from homeassistant.config_entries import OptionsFlow, OptionsFlowWithConfigEntry, ConfigEntry
 from homeassistant.core import callback, State
 from homeassistant.helpers.selector import selector
 import json, logging, voluptuous as vol
@@ -170,10 +170,13 @@ _ALLOWED = [
 
 class QuickBarsOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
-        self.config_entry = config_entry
-        self._snapshot: Dict[str, Any] | None = None
+        self._entry = config_entry
+        self._snapshot: Dict[str, Any] | None = None # latest snapshot from TV
         self._qb_index: int | None = None   # which quickbar is being edited
 
+    @property
+    def config_entry(self) -> ConfigEntry:
+        return self._entry  
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         # Pull snapshot over WS
@@ -227,7 +230,7 @@ class QuickBarsOptionsFlow(OptionsFlow):
 
         if user_input is None:
             schema = vol.Schema({
-                vol.Required("selected", default=saved_ids): selector({
+                vol.Required("saved", default=saved_ids): selector({
                     "entity": {"multiple": True, "domain": _ALLOWED}
                 })
             })

@@ -6,19 +6,22 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.config_entries import OptionsFlow, OptionsFlowWithConfigEntry, ConfigEntry
 from homeassistant.core import callback, State
 from homeassistant.helpers.selector import selector
+from homeassistant.helpers.network import get_url
+
 import json, logging, voluptuous as vol
 from .client import get_snapshot, post_snapshot
 
 import logging
 
 from .client import get_pair_code, confirm_pair
-from .client import ws_get_snapshot, ws_entities_replace, ws_put_snapshot, ws_entities_update
+from .client import ws_get_snapshot, ws_entities_replace, ws_put_snapshot, ws_entities_update, ws_ping
 from .constants import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
+    MINOR_VERSION = 1
 
     # ---------- Manual path ----------
     async def async_step_user(self, user_input=None) -> FlowResult:
@@ -37,7 +40,12 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             resp = await get_pair_code(self._host, self._port)
             self._pair_sid = resp.get("sid")
-            _LOGGER.debug("step_user: received sid=%s (masked)", self._pair_sid[:3] + "***" + self._pair_sid[-2:] if self._pair_sid else "<none>")
+            masked = (
+                f"{self._pair_sid[:3]}***{self._pair_sid[-2:]}"
+                if self._pair_sid and len(self._pair_sid) >= 5
+                else (self._pair_sid or "<none>")
+            )
+            _LOGGER.debug("step_user: received sid=%s", masked)
         except Exception as e:
             _LOGGER.exception("step_user: get_pair_code failed for %s:%s", self._host, self._port)
             return self.async_show_form(
@@ -62,19 +70,91 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         sid = getattr(self, "_pair_sid", None)
         _LOGGER.debug("step_pair: confirming with code=%s sid=%s", (code[:1]+"***"+code[-1:]), (sid[:3]+"***"+sid[-2:] if sid else "<none>"))
 
+        ha_name = self.hass.config.location_name or "Home Assistant"
+        ha_url  = None
         try:
-            resp = await confirm_pair(self._host, self._port, code, sid)
-            qb_id = resp.get("id") or f"{self._host}:{self._port}"
-            qb_name = resp.get("name") or "QuickBars TV"
-            qb_port = int(resp.get("port") or self._port)
-            _LOGGER.debug("step_pair: confirm_pair OK -> id=%s name=%s port=%s", qb_id, qb_name, qb_port)
-        except Exception as e:
-            _LOGGER.exception("step_pair: confirm_pair failed")
-            return self.async_show_form(step_id="pair", data_schema=schema, errors={"base": "bad_code"}, description_placeholders={"hint": f"{type(e).__name__}: {e}"})
+            ha_url = get_url(self.hass)  # best-effort, may raise if not configured
+        except Exception:
+            pass
+
+        resp = await confirm_pair(self._host, self._port, code, sid,
+                                   ha_instance=self._host,
+                                   ha_name=ha_name,
+                                   ha_url=ha_url)
+        qb_id = resp.get("id")
+        if not qb_id:
+            return self.async_show_form(
+                step_id="pair",
+                data_schema=schema,
+                errors={"base": "no_unique_id"},
+                description_placeholders={"hint": "QuickBars did not return a stable device ID"}
+            )
+
+        qb_name = resp.get("name") or "QuickBars TV App"
+        self._paired_name = qb_name
+        self.context["title_placeholders"] = {"name": qb_name}
+        qb_port = int(resp.get("port") or self._port)
+        has_token = bool(resp.get("has_token"))
 
         await self.async_set_unique_id(qb_id)
         self._abort_if_unique_id_configured(updates={CONF_HOST: self._host, CONF_PORT: qb_port, "id": qb_id})
-        return self.async_create_entry(title=qb_name, data={CONF_HOST: self._host, CONF_PORT: qb_port, "id": qb_id})
+
+        self._port = qb_port
+
+        if not has_token:
+            return await self.async_step_token()
+        return self.async_create_entry(title=self._paired_name, data={CONF_HOST: self._host, CONF_PORT: qb_port, "id": qb_id})
+    
+    async def async_step_token(self, user_input=None):
+        # Defaults
+        default_url = None
+        try:
+            default_url = get_url(self.hass)
+        except Exception:
+            default_url = ""
+
+        schema = vol.Schema({
+            vol.Required("url", default=default_url or ""): str,
+            vol.Required("token"): str,
+        })
+
+        if user_input is None:
+            return self.async_show_form(step_id="token", data_schema=schema)
+
+        url = user_input["url"].strip()
+        token = user_input["token"].strip()
+
+        try:
+            from .client import set_credentials
+            res = await set_credentials(self._host, self._port, url, token)
+            if not res.get("ok"):
+                # Keep the step open; show reason returned by TV app
+                reason = (res.get("reason") or "creds_invalid").replace("_", " ")
+                return self.async_show_form(
+                    step_id="token",
+                    data_schema=vol.Schema({
+                        vol.Required("url", default=url): str,
+                        vol.Required("token", default=token): str,
+                    }),
+                    errors={"base": "creds_invalid"},
+                    description_placeholders={"hint": reason},
+                )
+        except Exception as e:
+            return self.async_show_form(
+                step_id="token",
+                data_schema=vol.Schema({
+                    vol.Required("url", default=url): str,
+                    vol.Required("token", default=token): str,
+                }),
+                errors={"base": "tv_unreachable"},
+                description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+            )
+
+        # Success -> finish
+        return self.async_create_entry(
+            title=getattr(self, "_paired_name", "QuickBars TV"),
+            data={CONF_HOST: self._host, CONF_PORT: self._port, "id": self.unique_id},
+    )
 
     # -------- Zeroconf path --------
     async def async_step_zeroconf(self, discovery_info) -> FlowResult:
@@ -101,8 +181,8 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             props[key] = val
 
         # Prefer TXT 'id' if present; otherwise fall back to hostname/host
-        unique = (props.get("id") or hostname or host or "").strip()
-        title = props.get("name") or "QuickBars TV"
+        unique = (props.get("id") or "").strip()
+        title = props.get("name") or "QuickBars TV App"
 
         # If we don’t have host/port, abort quietly
         if not host or not port:
@@ -111,9 +191,8 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # If already configured, update host/port and abort (no duplicate flows)
         if unique:
             await self.async_set_unique_id(unique)
-            self._abort_if_unique_id_configured(
-                updates={CONF_HOST: host, CONF_PORT: port, "id": unique}
-            )
+            self._abort_if_unique_id_configured(updates={CONF_HOST: host, CONF_PORT: port, "id": unique})
+
 
         # Save endpoint for the pairing step
         self._host, self._port = host, port
@@ -168,28 +247,62 @@ _ALLOWED = [
 ]
 
 
-class QuickBarsOptionsFlow(OptionsFlow):
+class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
     def __init__(self, config_entry: ConfigEntry) -> None:
-        self._entry = config_entry
+        super().__init__(config_entry)
         self._snapshot: Dict[str, Any] | None = None # latest snapshot from TV
         self._qb_index: int | None = None   # which quickbar is being edited
 
-    @property
-    def config_entry(self) -> ConfigEntry:
-        return self._entry  
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        # Pull snapshot over WS
+        eid = self.config_entry.data.get("id")
+        _LOGGER.debug(
+            "options:init entry_id=%s unique_id=%s data_id=%s host=%s port=%s",
+            self.config_entry.entry_id,
+            getattr(self.config_entry, "unique_id", None),
+            eid,
+            self.config_entry.data.get("host"),
+            self.config_entry.data.get("port"),
+        )
+
+        # 1) Quick connectivity check
         try:
-            self._snapshot = await ws_get_snapshot(self.hass, self.config_entry, timeout=15.0)
+            _LOGGER.debug("options:init -> ws_ping start (expect id=%s)", eid)
+            ok = await ws_ping(self.hass, self.config_entry, timeout=5.0)
+            _LOGGER.debug("options:init -> ws_ping result=%s (expect id=%s)", ok, eid)
+            if not ok:
+                return self.async_show_form(
+                    step_id="init",
+                    errors={"base": "tv_unreachable"},
+                    description_placeholders={"hint": "WS ping failed"},
+                    data_schema=vol.Schema({})
+                )
         except Exception as e:
+            _LOGGER.exception("options:init ws_ping raised")
             return self.async_show_form(
                 step_id="init",
                 errors={"base": "tv_unreachable"},
                 description_placeholders={"hint": f"{type(e).__name__}: {e}"},
-                data_schema=vol.Schema({})  # Add empty schema
+                data_schema=vol.Schema({})
             )
-        # Go to expose UI
+
+        # 2) Only then pull the snapshot
+        try:
+            _LOGGER.debug("options:init -> ws_get_snapshot start (expect id=%s)", eid)
+            self._snapshot = await ws_get_snapshot(self.hass, self.config_entry, timeout=15.0)
+            _LOGGER.debug(
+                "options:init -> ws_get_snapshot ok: entities=%s quick_bars=%s",
+                len(self._snapshot.get("entities", []) or []),
+                len(self._snapshot.get("quick_bars", []) or []),
+            )
+        except Exception as e:
+            _LOGGER.exception("options:init ws_get_snapshot raised")
+            return self.async_show_form(
+                step_id="init",
+                errors={"base": "tv_unreachable"},
+                description_placeholders={"hint": f"{type(e).__name__}: {e}"},
+                data_schema=vol.Schema({})
+            )
+
         return await self.async_step_menu()
     
     async def async_step_menu(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -251,7 +364,7 @@ class QuickBarsOptionsFlow(OptionsFlow):
             return entity_id.split(".", 1)[-1]
 
         # Build replacement list
-        selected: List[str] = list(user_input.get("selected") or [])
+        selected: List[str] = list(user_input.get("saved") or [])
 
         try:
             names = {eid: _display_name(self.hass, eid) for eid in selected}
@@ -263,7 +376,7 @@ class QuickBarsOptionsFlow(OptionsFlow):
         except Exception as e:
             _LOGGER.exception("entities_replace failed")
             schema = vol.Schema({
-                vol.Required("selected", default=selected): selector({
+                vol.Required("saved", default=selected): selector({
                     "entity": {"multiple": True, "domain": _ALLOWED}
                 })
             })
@@ -549,11 +662,14 @@ class QuickBarsOptionsFlow(OptionsFlow):
                 vol.Required("show_time_on_quickbar", default=qb.get("showTimeOnQuickBar", cur_show_time)): selector({"boolean": {}}),
                 vol.Optional("ha_trigger_alias", default=qb.get("haTriggerAlias") or cur_alias): str,
                 vol.Optional("auto_close_domains", default=qb.get("autoCloseQuickBarDomains") or cur_domains): selector({
-                    "select": {"options": [
-                        "light","switch","button","fan","input_boolean","input_button",
-                        "script","scene","climate","cover","lock","media_player",
-                        "automation","camera","sensor","binary_sensor",
-                    ], "multiple": True}
+                    "select": {
+                        "options": [
+                            "light","switch","button","input_boolean","input_button",
+                            "script","scene",
+                            "automation","camera"
+                        ],
+                        "multiple": True
+                    }
                 }),
             })
             return self.async_show_form(

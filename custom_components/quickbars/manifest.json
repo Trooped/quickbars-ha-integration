@@ -1,7 +1,7 @@
 {
     "domain": "quickbars",
     "name": "QuickBars for Home Assistant",
-    "documentation": "https://trooped.dev/quickbars",
+    "documentation": "https://quickbars.app",
     "requirements": [],
     "dependencies": ["zeroconf"],
     "version": "0.0.2",
@@ -11,6 +11,6 @@
       { "type": "_quickbars._tcp.local." },
       { "type": "_quickbars._tcp.local.", "properties": { "api": "1" } }
   ],
-    "integration_type": "hub",
+    "integration_type": "service",
     "iot_class": "local_polling"
 }

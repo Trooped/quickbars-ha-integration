@@ -1,27 +1,77 @@
 {
+  "title": "QuickBars",
   "config": {
+    "flow_title": "{name}",
     "step": {
-      "init": { "title": "QuickBars Editor", "description": "Choose an action" },
-      "entities": { "title": "Export Entities", "description": "Select entities to export to QuickBars" },
-      "pick_quickbar": { "title": "Choose QuickBar" },
-      "edit_quickbar": { "title": "Edit QuickBar" },
-      "user": { "title": "Add QuickBars TV", "description": "Enter the TV's IP and port" },
-      "pair": { "title": "Pair with TV", "description": "Type the 4-character code shown on your TV" },
+      "user": {
+        "title": "Add QuickBars TV",
+        "description": "Enter the TV's IP and port"
+      },
+      "pair": {
+        "title": "Pair with TV",
+        "description": "Type the 4-character code shown on your TV"
+      },
       "zeroconf_confirm": {
         "title": "Pair {name}",
         "description": "We found a QuickBars TV app via Zeroconf.\n\n**Device ID:** {id}\n**IP:** {host}:{port}\n**API:** v{api}\n**App:** {app_version}\n\nClick **Continue** to show a pairing code on the TV and complete setup."
-      }
+      },
+      "token": {
+        "title": "Connect QuickBars to Home Assistant",
+        "description": "Enter your Home Assistant URL and a long-lived access token. We'll test the connection before saving.",
+        "data": {
+          "url": "Home Assistant URL",
+          "token": "Long-lived token"
+        }
+      },
+      "init": {
+        "title": "QuickBars Editor",
+        "description": "Choose an action"
+      },
+      "entities": {
+        "title": "Export Entities",
+        "description": "Select entities to export to QuickBars"
+      },
+      "pick_quickbar": { "title": "Choose QuickBar" },
+      "edit_quickbar": { "title": "Edit QuickBar" }
     },
     "error": {
+      "no_snapshot": "No snapshot available. Pull one first.",
+      "no_quickbars": "No QuickBars were found in the snapshot.",
+      "creds_invalid": "Couldn’t connect with the provided URL/token. {hint}",
       "tv_unreachable": "TV not reachable. Make sure the app is open and the pairing screen is visible.",
       "bad_code": "Invalid code. Try again.",
-      "no_snapshot": "No snapshot available. Pull one first.",
-      "no_quickbars": "No QuickBars were found in the snapshot."
+      "no_unique_id": "Could not get a stable device ID from the TV. Please try again."
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
     }
   },
   "options": {
     "step": {
-      "init": { "title": "QuickBars Editor", "description": "Pull / Edit / Push" }
+      "init": {
+        "title": "QuickBars Editor",
+        "description": "Pull / Edit / Push"
+      },
+      "qb_manage": {
+        "title": "QuickBars Options",
+        "description": "Configure automatic close domains and QuickBar behavior",
+        "data": {
+          "auto_close_domains": "Auto-close domains",
+          "close_delay_sec": "Close delay (seconds)"
+        }
+      },
+      "expose": {
+        "title": "Export Entities",
+        "description": "Pick entities to export to QuickBars",
+        "data": {
+          "saved": "Entities"
+        }
+      }
+    },
+    "error": {
+      "ws_error": "Could not communicate with QuickBars on the TV.",
+      "invalid_selection": "Please select at least one entity.",
+      "no_entities": "No entities available to export."
     }
   }
 }

@@ -10,6 +10,15 @@ _LOGGER = logging.getLogger(__name__)
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 
+def _ws_log(action: str, phase: str, cid: str, exp_id: str | None, extra: str = ""):
+    _LOGGER.debug("WS %s %s cid=%s id=%s %s", action, phase, cid, exp_id, extra)
+
+def _entry_id(entry) -> str:
+    eid = entry.data.get("id")
+    if not eid:
+        raise ValueError("Config entry missing 'id' (app-generated). Re-pair to create a proper entry.")
+    return eid
+
 # ---------- Connectivity ----------
 
 async def ping(host: str, port: int) -> bool:
@@ -80,16 +89,27 @@ async def get_pair_code(host: str, port: int) -> dict[str, Any]:
     )
     return data
 
-async def confirm_pair(host: str, port: int, code: str, sid: str, ha_instance: str | None = None) -> dict[str, Any]:
+async def confirm_pair(host: str, port: int, code: str, sid: str,
+                       ha_instance: str | None = None,
+                       ha_name: str | None = None,
+                       ha_url: str | None = None) -> dict[str, Any]:
     url = f"http://{host}:{port}/api/pair/confirm"
     payload: dict[str, Any] = {"code": code, "sid": sid}
     if ha_instance:
         payload["ha_instance"] = ha_instance
+    if ha_name:
+        payload["ha_name"] = ha_name
+    if ha_url:
+        payload["ha_url"] = ha_url
     masked = dict(payload, code=_mask_code(code), sid=_mask_sid(sid))
     _LOGGER.debug("confirm_pair: host=%s port=%s payload=%s", host, port, masked)
     data = await _request_json("POST", url, json=payload, timeout=15.0)
     _LOGGER.debug("confirm_pair: response=%s", data)
     return data
+
+async def set_credentials(host: str, port: int, url: str, token: str) -> dict[str, Any]:
+    return await _request_json("POST", f"http://{host}:{port}/api/ha/credentials",
+                               json={"url": url, "token": token}, timeout=20.0)
 
 # ---------- Authorized (paired) endpoints ----------
 
@@ -115,21 +135,29 @@ EVENT_RES = "quickbars_config_response"
 
 async def ws_get_snapshot(hass: HomeAssistant, entry: ConfigEntry, timeout: float = 15.0) -> dict[str, Any]:
     cid = secrets.token_urlsafe(8)
+    exp_id = _entry_id(entry)
     fut = hass.loop.create_future()
+    t0 = time.monotonic()
+
     def _cb(event):
         data = event.data or {}
-        if data.get("id") != entry.data.get("id"): return
-        if data.get("cid") != cid: return
-        if not fut.done(): fut.set_result(data)
+        if data.get("cid") != cid or data.get("id") != exp_id:
+            return
+        _ws_log("get_snapshot", "recv", cid, exp_id, f"ok={data.get('ok')} dt_ms={(time.monotonic()-t0)*1000:.0f}")
+        if not fut.done():
+            fut.set_result(data)
+
+    _ws_log("get_snapshot", "send", cid, exp_id, "")
     unsub = hass.bus.async_listen(EVENT_RES, _cb)
     try:
-        hass.bus.async_fire(EVENT_REQ, {"id": entry.data.get("id"), "action": "get_snapshot", "cid": cid})
+        hass.bus.async_fire(EVENT_REQ, {"id": exp_id, "action": "get_snapshot", "cid": cid})
         res = await asyncio.wait_for(fut, timeout)
         if not res.get("ok"):
-            raise RuntimeError(f"TV replied error: {res}")
+            raise RuntimeError(f"TV error: {res}")
         return res.get("payload") or {}
     finally:
         unsub()
+
 
 async def ws_entities_replace(
     hass: HomeAssistant,
@@ -140,13 +168,12 @@ async def ws_entities_replace(
     timeout: float = 25.0,
 ) -> dict[str, Any]:
     cid = secrets.token_urlsafe(8)
+    exp_id = _entry_id(entry)  # Get verified entry ID
     fut = hass.loop.create_future()
 
     def _cb(event):
         data = event.data or {}
-        if data.get("id") != entry.data.get("id"):
-            return
-        if data.get("cid") != cid:
+        if data.get("cid") != cid or data.get("id") != exp_id:  # Check both match
             return
         if not fut.done():
             fut.set_result(data)
@@ -161,7 +188,7 @@ async def ws_entities_replace(
 
         hass.bus.async_fire(
             EVENT_REQ,
-            {"id": entry.data.get("id"), "action": "entities_replace", "cid": cid, "payload": payload},
+            {"id": exp_id, "action": "entities_replace", "cid": cid, "payload": payload},  # Use exp_id
         )
         res = await asyncio.wait_for(fut, timeout)
         if not res.get("ok"):
@@ -171,26 +198,28 @@ async def ws_entities_replace(
         unsub()
 
 async def ws_entities_update(
-    hass,
-    entry,
-    updates: List[Dict[str, Any]],   # each item: {"id": "...", "customName": "...", ...}
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    updates: List[Dict[str, Any]],
     timeout: float = 20.0,
 ) -> Dict[str, Any]:
     cid = secrets.token_urlsafe(8)
+    exp_id = _entry_id(entry)  # Get verified entry ID
     fut = hass.loop.create_future()
 
     def _cb(event):
         data = event.data or {}
-        if data.get("id") != entry.data.get("id"): return
-        if data.get("cid") != cid: return
-        if not fut.done(): fut.set_result(data)
+        if data.get("cid") != cid or data.get("id") != exp_id:  # Check both match
+            return
+        if not fut.done(): 
+            fut.set_result(data)
 
     unsub = hass.bus.async_listen(EVENT_RES, _cb)
     try:
         hass.bus.async_fire(
             EVENT_REQ,
             {
-                "id": entry.data.get("id"),
+                "id": exp_id,  # Use exp_id
                 "action": "entities_update",
                 "cid": cid,
                 "payload": {"entities": updates},
@@ -203,22 +232,34 @@ async def ws_entities_update(
     finally:
         unsub()
 
-async def ws_put_snapshot(hass: HomeAssistant, entry: ConfigEntry, snapshot: dict[str, Any], timeout: float = 20.0) -> None:
+async def ws_put_snapshot(
+    hass: HomeAssistant, 
+    entry: ConfigEntry, 
+    snapshot: dict[str, Any], 
+    timeout: float = 20.0
+) -> None:
     cid = secrets.token_urlsafe(8)
+    exp_id = _entry_id(entry)  # Get verified entry ID
     fut: asyncio.Future = hass.loop.create_future()
 
     def _cb(event):
         data = event.data or {}
-        if data.get("id") != entry.data.get("id"):
-            return
-        if data.get("cid") != cid:
+        if data.get("cid") != cid or data.get("id") != exp_id:  # Check both match
             return
         if not fut.done():
             fut.set_result(data)
 
     unsub = hass.bus.async_listen(EVENT_RES, _cb)
     try:
-        hass.bus.async_fire(EVENT_REQ, {"id": entry.data.get("id"), "action": "put_snapshot", "cid": cid, "payload": snapshot})
+        hass.bus.async_fire(
+            EVENT_REQ, 
+            {
+                "id": exp_id,  # Use exp_id
+                "action": "put_snapshot", 
+                "cid": cid, 
+                "payload": snapshot
+            }
+        )
         res = await asyncio.wait_for(fut, timeout)
         if not res.get("ok"):
             raise RuntimeError(f"TV replied error: {res}")
@@ -227,32 +268,24 @@ async def ws_put_snapshot(hass: HomeAssistant, entry: ConfigEntry, snapshot: dic
 
 
 async def ws_ping(hass: HomeAssistant, entry: ConfigEntry, timeout: float = 5.0) -> bool:
-    """Check connectivity using WebSocket (event bus)."""
     cid = secrets.token_urlsafe(8)
+    exp_id = _entry_id(entry)
     fut = hass.loop.create_future()
-    
+    t0 = time.monotonic()
+
     def _cb(event):
         data = event.data or {}
-        if data.get("id") != entry.data.get("id"):
+        # Only accept exact match on both
+        if data.get("cid") != cid or data.get("id") != exp_id:
             return
-        if data.get("cid") != cid:
-            return
+        _ws_log("ping", "recv", cid, exp_id, f"ok={data.get('ok')} dt_ms={(time.monotonic()-t0)*1000:.0f}")
         if not fut.done():
-            fut.set_result(data)
-    
+            fut.set_result(bool(data.get("ok", False)))
+
+    _ws_log("ping", "send", cid, exp_id, "")
     unsub = hass.bus.async_listen(EVENT_RES, _cb)
     try:
-        hass.bus.async_fire(EVENT_REQ, {
-            "id": entry.data.get("id"), 
-            "action": "ping", 
-            "cid": cid
-        })
-        res = await asyncio.wait_for(fut, timeout)
-        return res.get("ok", False)
-    except asyncio.TimeoutError:
-        return False
-    except Exception:
-        _LOGGER.exception("ws_ping failed")
-        return False
+        hass.bus.async_fire(EVENT_REQ, {"id": exp_id, "action": "ping", "cid": cid})
+        return await asyncio.wait_for(fut, timeout)
     finally:
         unsub()

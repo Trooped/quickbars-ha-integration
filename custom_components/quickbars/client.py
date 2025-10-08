@@ -289,3 +289,36 @@ async def ws_ping(hass: HomeAssistant, entry: ConfigEntry, timeout: float = 5.0)
         return await asyncio.wait_for(fut, timeout)
     finally:
         unsub()
+
+
+
+async def ws_notify(hass, entry, payload: dict, timeout: float = 8.0) -> bool:
+    """Send a 'notify' command with style/media options to the TV."""
+    cid = secrets.token_urlsafe(8)
+    exp_id = _entry_id(entry)
+    fut = hass.loop.create_future()
+    t0 = time.monotonic()
+
+    def _cb(event):
+        data = event.data or {}
+        if data.get("cid") != cid or data.get("id") != exp_id:
+            return
+        _ws_log("notify", "recv", cid, exp_id, f"ok={data.get('ok')} dt_ms={(time.monotonic()-t0)*1000:.0f}")
+        if not fut.done():
+            fut.set_result(bool(data.get("ok", False)))
+
+    _ws_log("notify", "send", cid, exp_id, "")
+    unsub = hass.bus.async_listen(EVENT_RES, _cb)
+    try:
+        hass.bus.async_fire(EVENT_REQ, {"id": exp_id, "action": "notify", "cid": cid, "payload": payload})
+        return await asyncio.wait_for(fut, timeout)
+    finally:
+        unsub()
+
+def ws_notify_fire(hass, entry, payload: dict, cid: str | None = None) -> str:
+    """Send a 'notify' command (no wait); return the correlation id used."""
+    exp_id = _entry_id(entry)
+    cid = cid or secrets.token_urlsafe(8)
+    hass.bus.async_fire(EVENT_REQ, {"id": exp_id, "action": "notify", "cid": cid, "payload": payload})
+    _ws_log("notify", "fire", cid, exp_id, "")
+    return cid

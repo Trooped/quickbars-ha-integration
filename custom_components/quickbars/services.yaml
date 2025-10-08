@@ -21,3 +21,119 @@ camera_toggle:
       required: true
       selector:
         text:
+
+
+prompt:
+  name: Prompt (rich notification on TV)
+  description: Show a rich prompt/notification on the TV with optional actions.
+  fields:
+    device_id:
+      name: Target QuickBars device
+      required: false
+      selector:
+        device:
+          integration: quickbars
+
+    title:
+      name: Title
+      description: Title of the prompt/notification.
+      required: false
+      selector:
+        text:
+
+    mdi_icon:
+      name: Icon
+      description: Pick an MDI icon (e.g., mdi:bell). The integration will embed the SVG and show it near the title.
+      required: false
+      selector:
+        icon:
+          placeholder: mdi:bell
+
+    message:
+      name: Message
+      description: Main message text.
+      required: true
+      selector:
+        text:
+
+    actions:
+      name: Actions
+      description: List of {id, label} objects.
+      required: false
+      selector:
+        object:
+
+    position:
+      name: Position
+      required: true
+      selector:
+        select:
+          options:
+            - label: Top left
+              value: top_left
+            - label: Top right
+              value: top_right
+            - label: Bottom left
+              value: bottom_left
+            - label: Bottom right
+              value: bottom_right
+
+    length:
+      name: Length
+      description: How long to show the notification (seconds).
+      required: false
+      default: 6
+      selector:
+        number:
+          min: 3
+          max: 120
+          step: 1
+          mode: slider
+          unit_of_measurement: s
+
+    color:
+      name: Overlay color
+      description: RGB color; transparency is set separately.
+      required: false
+      default: "#8cd0e6"
+      selector:
+        color_rgb:
+
+    transparency:
+      name: Transparency
+      description: 0.0 = opaque, 1.0 = fully transparent
+      required: false
+      default: 0.0
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.05
+          mode: slider
+
+    interrupt:
+      name: Interrupt
+      description: Hide any existing notification, and show this one immediately.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+    # Optional image
+    image:
+      name: Image source
+      description: Object with "url" or "path"
+      required: false
+      selector:
+        object:
+
+    sound:
+      name: Sound
+      description: >
+        Provide ONE of:
+        - url: "https://example.com/file.mp3"
+        - path: "chimes/ding.mp3" (served from /config/www → /local/chimes/ding.mp3)
+        - media_id: "media-source://media/local/chimes/ding.mp3"
+      required: false
+      selector:
+        object:

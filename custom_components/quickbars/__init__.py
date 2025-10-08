@@ -1,29 +1,45 @@
 """The QuickBars for Home Assistant Integration"""
 
 from __future__ import annotations
+
 from datetime import timedelta
 from typing import Any
 
+import asyncio
 import logging
-_LOGGER = logging.getLogger(__name__)
+
+import base64
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.components import zeroconf as ha_zc
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, ServiceCall
-import homeassistant.helpers.config_validation as cv
+from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.network import get_url
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.helpers import device_registry as dr
-from homeassistant.data_entry_flow import FlowResult
-import asyncio
-from homeassistant.components import zeroconf as ha_zc
-from zeroconf.asyncio import AsyncServiceBrowser
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from zeroconf import ServiceStateChange
+from zeroconf.asyncio import AsyncServiceBrowser
+from homeassistant.components import media_source
+from homeassistant.components.media_player.browse_media import async_process_play_media_url
+from homeassistant.components.http.auth import async_sign_path
 
-from .client import get_snapshot, post_snapshot, ping, ws_ping
+from .client import (
+    get_snapshot,
+    post_snapshot,
+    ping,
+    ws_ping,
+    ws_notify,          # kept if you still use it elsewhere
+    ws_notify_fire,     # fire-and-forget notify used by prompt
+    EVENT_RES,          # our WS response bus event name
+)
 from .constants import DOMAIN  # DOMAIN = "quickbars"
 
+_LOGGER = logging.getLogger(__name__)
 
 EVENT_NAME = "quickbars.open"
 SERVICE_TYPE = "_quickbars._tcp.local."
@@ -37,7 +53,7 @@ ALLOWED_DOMAINS = [
 
 # ----- Service Schemas -----
 QUICKBAR_SCHEMA = vol.Schema({vol.Required("alias"): cv.string})
-CAMERA_SCHEMA = vol.Schema({vol.Required("camera_alias"): cv.string})
+CAMERA_SCHEMA   = vol.Schema({vol.Required("camera_alias"): cv.string})
 
 
 # ============ Connectivity (Coordinator) ============
@@ -50,7 +66,7 @@ class QuickBarsCoordinator(DataUpdateCoordinator[bool]):
             hass,
             _LOGGER,
             name=f"quickbars_{entry.entry_id}_conn",
-            update_interval=timedelta(seconds=10),  # adjust if you want
+            update_interval=timedelta(seconds=10),
         )
 
     async def _async_update_data(self) -> bool:
@@ -63,7 +79,6 @@ class QuickBarsCoordinator(DataUpdateCoordinator[bool]):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            # Make the integration show as unavailable/failed, HA will retry later
             raise UpdateFailed(f"WS ping error: {e}") from e
 
 
@@ -77,7 +92,7 @@ class _Presence:
         self._aiozc = None
 
     async def start(self) -> None:
-        self._aiozc = await ha_zc.async_get_async_instance(self.hass)  # shared AsyncZeroconf
+        self._aiozc = await ha_zc.async_get_async_instance(self.hass)
         self._browser = AsyncServiceBrowser(
             self._aiozc.zeroconf, SERVICE_TYPE, handlers=[self._on_change]
         )
@@ -88,16 +103,12 @@ class _Presence:
             self._browser = None
 
     def _on_change(self, *args, **kwargs) -> None:
-        """Compat handler for zeroconf callbacks (positional or keyword)."""
         if kwargs:
             service_type = kwargs.get("service_type")
             name = kwargs.get("name")
             state_change = kwargs.get("state_change")
         else:
-            # Old style: (zeroconf, service_type, name, state_change)
             _, service_type, name, state_change = args
-
-        # Defer real work to an async task
         self.hass.async_create_task(self._handle_change(service_type, name, state_change))
 
     async def _handle_change(self, service_type: str, name: str, state_change: ServiceStateChange) -> None:
@@ -106,8 +117,6 @@ class _Presence:
 
         wanted_id = (self.entry.data.get("id") or "").strip().lower()
 
-        # Only resolve on add/update — we no longer synthesize availability here;
-        # the coordinator ping is the source of truth for connectivity.
         if state_change is ServiceStateChange.Removed:
             return
 
@@ -127,7 +136,10 @@ class _Presence:
 
         host = (info.parsed_addresses() or [self.entry.data.get(CONF_HOST)])[0]
         port = info.port or self.entry.data.get(CONF_PORT)
-        if host and port and (host != self.entry.data.get(CONF_HOST) or port != self.entry.data.get(CONF_PORT)):
+        if host and port and (
+            host != self.entry.data.get(CONF_HOST)
+            or port != self.entry.data.get(CONF_PORT)
+        ):
             new_data = {**self.entry.data, CONF_HOST: host, CONF_PORT: port}
             _LOGGER.debug("Presence: updating host/port -> %s:%s", host, port)
             self.hass.config_entries.async_update_entry(self.entry, data=new_data)
@@ -154,34 +166,255 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
     """Set up QuickBars from a config entry."""
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"snapshot": None}
 
-    # Optional: create a Device even if we expose no entities
+    # Create a Device even if we expose no entities (lets us target device_id)
     dev_reg = dr.async_get(hass)
-    dev_reg.async_get_or_create(
+    device = dev_reg.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.data.get("id") or entry.entry_id)},
         manufacturer="QuickBars",
         name=entry.title or "QuickBars TV",
     )
+    hass.data[DOMAIN][entry.entry_id]["device_id"] = device.id
 
-    # 1) Start presence (keeps host/port fresh)
+    # 1) Presence
     presence = _Presence(hass, entry)
     await presence.start()
 
-    # 2) Start the ping coordinator (source of truth for connectivity)
+    # 2) Connectivity coordinator
     coordinator = QuickBarsCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
 
+    # ---------- helpers that close over hass/entry ----------
+
+    def _entry_for_device(device_id: str | None):
+        """Resolve our config entry from a HA device_id; fallback to the single entry."""
+        if device_id:
+            dev = dr.async_get(hass).async_get(device_id)
+            if dev:
+                ident = next((v for (d, v) in dev.identifiers if d == DOMAIN), None)
+                if ident:
+                    for ent in hass.config_entries.async_entries(DOMAIN):
+                        if ent.data.get("id") == ident or ent.entry_id == ident:
+                            return ent
+        entries = hass.config_entries.async_entries(DOMAIN)
+        if len(entries) == 1:
+            return entries[0]
+        raise ValueError("Multiple QuickBars entries present—supply device_id")
+
+    def _abs(spec):
+        if not isinstance(spec, dict):
+            return None
+        if spec.get("url"):
+            return spec["url"]
+        if spec.get("path"):
+            base = get_url(hass)
+            p = str(spec["path"]).lstrip("/")
+            if not p.startswith("local/"):
+                p = f"local/{p}"
+            return f"{base}/{p}"
+        return None
+
+    async def _svc_prompt(call: ServiceCall) -> None:
+        entry2 = _entry_for_device(call.data.get("device_id"))
+
+        # ---- normalize overlay color to #RRGGBB (from RGB selector or string) ----
+        col_in = call.data.get("color")
+        color_hex: str | None = None
+        if isinstance(col_in, (list, tuple)) and len(col_in) == 3:
+            r, g, b = (int(col_in[0]), int(col_in[1]), int(col_in[2]))
+            color_hex = f"#{r:02x}{g:02x}{b:02x}"
+        elif isinstance(col_in, dict) and all(k in col_in for k in ("r", "g", "b")):
+            r, g, b = (int(col_in["r"]), int(col_in["g"]), int(col_in["b"]))
+            color_hex = f"#{r:02x}{g:02x}{b:02x}"
+        elif isinstance(col_in, str) and col_in.strip():
+            color_hex = col_in.strip()
+
+        # ---- resolve mdi icon to SVG data URI (no color/size knobs) ----
+        mdi_icon = call.data.get("mdi_icon")
+        _LOGGER.debug("prompt: mdi_icon requested = %r", mdi_icon)
+
+        icon_svg_data_uri = None
+        icon_url = None
+
+        if mdi_icon:
+            # Fallback URL the TV can fetch itself (works even if HA can't fetch)
+            icon_id = mdi_icon.strip().replace(":", "%3A")
+            icon_url = f"https://api.iconify.design/{icon_id}.svg"
+
+            # Try to inline the SVG (may fail if HA has no internet)
+            icon_svg_data_uri = await _mdi_svg_data_uri(hass, mdi_icon)
+            if icon_svg_data_uri:
+                _LOGGER.debug("prompt: icon_svg_data_uri size = %d bytes", len(icon_svg_data_uri))
+            else:
+                _LOGGER.warning("prompt: mdi_icon %r provided but SVG fetch failed/null; will send icon_url fallback", mdi_icon)
+
+        img_url = None
+        img_spec = call.data.get("image")
+        if isinstance(img_spec, dict) and "media_id" in img_spec:
+            img_url = await _abs_media_url(hass, img_spec)
+        else:
+            img_url = _abs(img_spec)  # your existing helper handles url/path
+
+        # Sound: support url, path, or media-source via the new object; also accept legacy sound_url
+        sound_url = None
+        if call.data.get("sound"):
+            sound_url = await _abs_media_url(hass, call.data["sound"])
+        elif call.data.get("sound_url"):
+            # legacy plain string
+            sound_url = await _abs_media_url(hass, call.data.get("sound_url"))
+
+        length_val = call.data.get("length")
+        try:
+            chosen_duration = int(length_val) if length_val is not None and str(length_val).strip() != "" else 6
+        except Exception:
+            chosen_duration = 6
+
+        if chosen_duration < 3:
+            chosen_duration = 3
+        elif chosen_duration > 120:
+            chosen_duration = 120
+
+        payload = {
+            "title":        call.data.get("title"),
+            "message":      call.data["message"],
+            "actions":      call.data.get("actions") or [],
+            "duration":     chosen_duration,
+            "position":     call.data.get("position"),
+            "color":        color_hex,                      # if you added color normalization
+            "transparency": call.data.get("transparency"),
+            "interrupt":    bool(call.data.get("interrupt", False)),
+            "image_url":    img_url,
+            "sound_url":    sound_url,                      # <-- now robustly resolved
+            "icon_svg_data_uri": icon_svg_data_uri,       # if you added icon embedding earlier
+            "icon_url":     icon_url,                      # fallback if SVG fetch failed
+        }
+        payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
+
+        cid = call.data.get("cid")
+        if cid:
+            ws_notify(hass, entry2, payload, cid=cid)
+        else:
+            ws_notify_fire(hass, entry2, payload)
+
+        # Let automations latch onto the correlation id if desired
+        hass.bus.async_fire(
+            f"{DOMAIN}.prompt_started",
+            {
+                "device_id": hass.data[DOMAIN][entry.entry_id]["device_id"],
+                "entry_id": entry2.entry_id,
+                "cid": cid,
+                "title": payload.get("title"),
+            },
+        )
+
+    # Register interactive prompt service
+    hass.services.async_register(DOMAIN, "prompt", _svc_prompt)
+
+    # Bridge TV button clicks -> HA event (dynamic notifications)
+    def _on_res(evt):
+        data = evt.data or {}
+        exp_id = entry.data.get("id") or entry.entry_id
+        if data.get("id") != exp_id:
+            return
+        if data.get("type") != "notify_action":
+            return
+
+        hass.bus.async_fire(
+            f"{DOMAIN}.notification_action",
+            {
+                "device_id": hass.data[DOMAIN][entry.entry_id]["device_id"],
+                "entry_id": entry.entry_id,
+                "cid": data.get("cid"),
+                "action_id": data.get("action_id"),
+                "label": data.get("label"),
+            },
+        )
+
+    unsub_actions = hass.bus.async_listen(EVENT_RES, _on_res)
+
+    # Store handles for unload
     hass.data[DOMAIN][entry.entry_id].update(
         presence=presence,
         coordinator=coordinator,
+        unsub_actions=unsub_actions,
     )
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: config_entries.ConfigEntry) -> bool:
     stored = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
-    presence = stored.get("presence")
-    if presence:
+    if (u := stored.get("unsub_actions")):
+        u()
+    if (presence := stored.get("presence")):
         await presence.stop()
     # no platforms to unload
     return True
+
+
+async def _mdi_svg_data_uri(hass, mdi_icon: str) -> str | None:
+    """Fetch mdi:<name> as SVG and return as a data URI (base64)."""
+    try:
+        icon = (mdi_icon or "").strip()
+        if not icon:
+            return None
+        icon_id = icon.replace(":", "%3A")
+        url = f"https://api.iconify.design/{icon_id}.svg"
+        session = async_get_clientsession(hass)
+        async with session.get(url, timeout=8) as resp:
+            if resp.status != 200:
+                _LOGGER.warning("iconify fetch failed (%s): %s", resp.status, url)
+                return None
+            svg_bytes = await resp.read()
+        b64 = base64.b64encode(svg_bytes).decode()
+        return f"data:image/svg+xml;base64,{b64}"
+    except Exception as e:
+        _LOGGER.warning("iconify fetch error for %s: %s", mdi_icon, e)
+        return None
+    
+async def _abs_media_url(hass, spec) -> str | None:
+    """
+    Resolve a media spec into an absolute, fetchable URL.
+    Supports:
+      - {"url": "https://..."}                  -> returned as-is
+      - {"path": "sub/dir/file.ext"}            -> <base>/local/sub/dir/file.ext
+      - {"media_id": "media-source://..."}      -> resolved & signed URL
+      - "https://..." (plain str)               -> returned as-is
+      - "/local/..." (plain str)                -> prefixed with base
+    """
+    if not spec:
+        return None
+
+    # plain string (absolute URL or /local path)
+    if isinstance(spec, str):
+        if spec.startswith(("http://", "https://")):
+            return spec
+        if spec.startswith("/local/") or spec.startswith("local/"):
+            base = get_url(hass)
+            p = spec.lstrip("/")
+            return f"{base}/{p}"
+        return spec  # unknown string; let the app try
+
+    # object with url / path / media_id
+    if isinstance(spec, dict):
+        if spec.get("url"):
+            return spec["url"]
+
+        if spec.get("path"):
+            base = get_url(hass)
+            p = str(spec["path"]).lstrip("/")
+            if not p.startswith("local/"):
+                p = f"local/{p}"
+            return f"{base}/{p}"
+
+        media_id = spec.get("media_id")
+        if media_id:
+            # Resolve media_source to a URL local to HA
+            play_item = await media_source.async_resolve_media(hass, media_id, None)
+            url = async_process_play_media_url(hass, play_item.url)
+            # If HA returns a relative URL (starts with '/'), sign it so no auth header is needed
+            if url.startswith("/"):
+                signed_path = await async_sign_path(hass, url, timedelta(seconds=60))
+                return f"{get_url(hass)}{signed_path}"
+            return url
+
+    return None

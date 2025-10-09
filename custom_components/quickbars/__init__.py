@@ -214,24 +214,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
             return f"{base}/{p}"
         return None
 
-    async def _svc_prompt(call: ServiceCall) -> None:
+    async def _svc_notify(call: ServiceCall) -> None:
         entry2 = _entry_for_device(call.data.get("device_id"))
 
         # ---- normalize overlay color to #RRGGBB (from RGB selector or string) ----
+
+        def _clamp8(x: int) -> int:
+            return 0 if x < 0 else 255 if x > 255 else x
+
         col_in = call.data.get("color")
         color_hex: str | None = None
         if isinstance(col_in, (list, tuple)) and len(col_in) == 3:
-            r, g, b = (int(col_in[0]), int(col_in[1]), int(col_in[2]))
+            r, g, b = (_clamp8(int(col_in[0])), _clamp8(int(col_in[1])), _clamp8(int(col_in[2])))
             color_hex = f"#{r:02x}{g:02x}{b:02x}"
+
         elif isinstance(col_in, dict) and all(k in col_in for k in ("r", "g", "b")):
-            r, g, b = (int(col_in["r"]), int(col_in["g"]), int(col_in["b"]))
+            r, g, b = (_clamp8(int(col_in["r"])), _clamp8(int(col_in["g"])), _clamp8(int(col_in["b"])))
             color_hex = f"#{r:02x}{g:02x}{b:02x}"
+
         elif isinstance(col_in, str) and col_in.strip():
             color_hex = col_in.strip()
 
         # ---- resolve mdi icon to SVG data URI (no color/size knobs) ----
         mdi_icon = call.data.get("mdi_icon")
-        _LOGGER.debug("prompt: mdi_icon requested = %r", mdi_icon)
 
         icon_svg_data_uri = None
         icon_url = None
@@ -243,25 +248,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
 
             # Try to inline the SVG (may fail if HA has no internet)
             icon_svg_data_uri = await _mdi_svg_data_uri(hass, mdi_icon)
-            if icon_svg_data_uri:
-                _LOGGER.debug("prompt: icon_svg_data_uri size = %d bytes", len(icon_svg_data_uri))
-            else:
-                _LOGGER.warning("prompt: mdi_icon %r provided but SVG fetch failed/null; will send icon_url fallback", mdi_icon)
 
         img_url = None
         img_spec = call.data.get("image")
         if isinstance(img_spec, dict) and "media_id" in img_spec:
             img_url = await _abs_media_url(hass, img_spec)
         else:
-            img_url = _abs(img_spec)  # your existing helper handles url/path
+            img_url = _abs(img_spec)  
 
         # Sound: support url, path, or media-source via the new object; also accept legacy sound_url
         sound_url = None
         if call.data.get("sound"):
             sound_url = await _abs_media_url(hass, call.data["sound"])
-        elif call.data.get("sound_url"):
-            # legacy plain string
-            sound_url = await _abs_media_url(hass, call.data.get("sound_url"))
+
+        sound_pct = None
+        snd = call.data.get("sound")
+        if isinstance(snd, dict) and "volume_percent" in snd:
+            try:
+                sound_pct = int(snd.get("volume_percent"))
+            except (TypeError, ValueError):
+                sound_pct = None
+        elif "sound_volume_percent" in call.data:
+            try:
+                sound_pct = int(call.data.get("sound_volume_percent"))
+            except (TypeError, ValueError):
+                sound_pct = None
+
+        # custom volume - if provided
+        if sound_pct is not None:
+            if sound_pct < 0: sound_pct = 0
+            if sound_pct > 200: sound_pct = 200
 
         length_val = call.data.get("length")
         try:
@@ -280,12 +296,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
             "actions":      call.data.get("actions") or [],
             "duration":     chosen_duration,
             "position":     call.data.get("position"),
-            "color":        color_hex,                      # if you added color normalization
+            "color":        color_hex,                      
             "transparency": call.data.get("transparency"),
             "interrupt":    bool(call.data.get("interrupt", False)),
             "image_url":    img_url,
-            "sound_url":    sound_url,                      # <-- now robustly resolved
-            "icon_svg_data_uri": icon_svg_data_uri,       # if you added icon embedding earlier
+            "sound_url":    sound_url,                      
+            "sound_volume_percent": sound_pct,
+            "icon_svg_data_uri": icon_svg_data_uri,       
             "icon_url":     icon_url,                      # fallback if SVG fetch failed
         }
         payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
@@ -298,7 +315,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
 
         # Let automations latch onto the correlation id if desired
         hass.bus.async_fire(
-            f"{DOMAIN}.prompt_started",
+            f"{DOMAIN}.notification_sent",
             {
                 "device_id": hass.data[DOMAIN][entry.entry_id]["device_id"],
                 "entry_id": entry2.entry_id,
@@ -308,7 +325,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
         )
 
     # Register interactive prompt service
-    hass.services.async_register(DOMAIN, "prompt", _svc_prompt)
+    hass.services.async_register(DOMAIN, "notify", _svc_notify)
 
     # Bridge TV button clicks -> HA event (dynamic notifications)
     def _on_res(evt):

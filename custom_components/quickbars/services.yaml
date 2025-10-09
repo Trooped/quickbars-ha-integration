@@ -23,20 +23,23 @@ camera_toggle:
         text:
 
 
-prompt:
-  name: Prompt (rich notification on TV)
-  description: Show a rich prompt/notification on the TV with optional actions.
+notify:
+  name: Send a Notification using QuickBars
+  description: Show a rich notification on the TV with optional actions.
   fields:
     device_id:
       name: Target QuickBars device
       required: false
+      description: >
+        Select a specific QuickBars device. If omitted, the notification is sent
+        to all connected QuickBars devices (default).
       selector:
         device:
           integration: quickbars
 
     title:
       name: Title
-      description: Title of the prompt/notification.
+      description: Title of the notification.
       required: false
       selector:
         text:
@@ -55,17 +58,24 @@ prompt:
       required: true
       selector:
         text:
+      example: 'Door opened at {{ now().strftime("%H:%M:%S") }}'
 
     actions:
       name: Actions
       description: List of {id, label} objects.
       required: false
+      example:
+        - id: "open_door"
+          label: "Open"
+        - id: "dismiss"
+          label: "Dismiss"
       selector:
         object:
 
     position:
       name: Position
       required: true
+      default: bottom_left
       selector:
         select:
           options:
@@ -119,21 +129,47 @@ prompt:
       selector:
         boolean:
 
-    # Optional image
     image:
       name: Image source
-      description: Object with "url" or "path"
+      description: |
+        Provide ONE of:
+          - url: "https://example.com/pic.jpg"
+          - path: "folder/file.jpg"      (relative to /config/www → served at /local/folder/file.jpg)
+          - media_id: "media-source://media_source/local/folder/file.jpg"  (from My media)
       required: false
       selector:
         object:
+      example: >
+        {"url": "https://example.com/pic.jpg"} or
+        {"path": "images/quickbars-hero.png"} or
+        {"media_id": "media-source://media_source/local/images/quickbars-hero.png"}
 
     sound:
       name: Sound
-      description: >
+      description: |
         Provide ONE of:
-        - url: "https://example.com/file.mp3"
-        - path: "chimes/ding.mp3" (served from /config/www → /local/chimes/ding.mp3)
-        - media_id: "media-source://media/local/chimes/ding.mp3"
+          - url: "https://example.com/file.mp3"
+          - path: "chimes/ding.mp3"      (relative to /config/www → /local/chimes/ding.mp3)
+          - media_id: "media-source://media_source/local/chimes/ding.mp3"  (from My media)
       required: false
       selector:
         object:
+      example: >
+        {"url": "https://example.com/file.mp3"} or
+        {"path": "chimes/ding.mp3"} or
+        {"media_id": "media-source://media_source/local/chimes/ding.mp3"}
+      
+
+    sound_volume_percent:
+      name: Sound volume (%)
+      description: >
+        0–200%. 100% = system volume; >100% uses post-mix boost (may clip/distort).
+      required: false
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 200
+          step: 5
+          unit_of_measurement: "%"
+          mode: slider

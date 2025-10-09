@@ -28,14 +28,10 @@ from homeassistant.components import media_source
 from homeassistant.components.media_player.browse_media import async_process_play_media_url
 from homeassistant.components.http.auth import async_sign_path
 
+import secrets
+
 from .client import (
-    get_snapshot,
-    post_snapshot,
-    ping,
     ws_ping,
-    ws_notify,          # kept if you still use it elsewhere
-    ws_notify_fire,     # fire-and-forget notify used by prompt
-    EVENT_RES,          # our WS response bus event name
 )
 from .constants import DOMAIN  # DOMAIN = "quickbars"
 
@@ -378,11 +374,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
         }
         payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
 
-        cid = call.data.get("cid")
-        if cid:
-            ws_notify(hass, entry2, payload, cid=cid)
-        else:
-            ws_notify_fire(hass, entry2, payload)
+        # Correlation id: keep provided or generate one (to match old behavior)
+        cid = call.data.get("cid") or secrets.token_urlsafe(8)
+        payload["cid"] = cid  # include in the event payload just like before
+
+        # Fire as a plain HA event (like quickbars.open)
+        hass.bus.async_fire("quickbars.notify", payload)
 
         # Let automations latch onto the correlation id if desired
         hass.bus.async_fire(
@@ -399,12 +396,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
     hass.services.async_register(DOMAIN, "notify", _svc_notify)
 
     # Bridge TV button clicks -> HA event (dynamic notifications)
-    def _on_res(evt):
+    def _on_action(evt):
         data = evt.data or {}
+
+        # Optional scoping by integration id:
+        # If your Android client includes "id" in quickbars.action, keep this filter.
         exp_id = entry.data.get("id") or entry.entry_id
-        if data.get("id") != exp_id:
-            return
-        if data.get("type") != "notify_action":
+        if data.get("id") and data.get("id") != exp_id:
             return
 
         hass.bus.async_fire(
@@ -418,13 +416,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
             },
         )
 
-    unsub_actions = hass.bus.async_listen(EVENT_RES, _on_res)
+    # Register the listener
+    unsub_action = hass.bus.async_listen("quickbars.action", _on_action)
 
     # Store handles for unload
     hass.data[DOMAIN][entry.entry_id].update(
         presence=presence,
         coordinator=coordinator,
-        unsub_actions=unsub_actions,
+        unsub_actions=unsub_action,
     )
     return True
 

@@ -11,16 +11,88 @@ quickbar_toggle:
         text:
 
 camera_toggle:
-  name: Toggle Camera PiP
-  description: Show/hide a camera PiP by alias (toggle handled by the Android app).
+  name: Show camera (PiP)
+  description: |
+    Show a camera overlay on the TV.
+    The camera MUST be imported into QuickBars and have an **MJPEG** stream URL.
+    Provide either an alias (as known to QuickBars) or select a Home Assistant camera entity.
+
   fields:
     camera_alias:
-      name: Camera Alias
-      description: Camera alias defined in the Android TV app.
-      example: porch_cam
-      required: true
+      name: Camera alias (QuickBars)
+      description: |
+        The alias as imported into QuickBars.
+        Use this if you know the QuickBars camera alias.
+        You can also use **camera_entity** instead (no need to set both).
+      required: false
       selector:
         text:
+      example: front_door
+
+    camera_entity:
+      name: Camera entity
+      description: |
+        Select a Home Assistant camera entity that corresponds to an imported QuickBars camera.
+        The camera must expose an **MJPEG** URL in the TV app configuration.
+      required: false
+      selector:
+        entity:
+          domain: camera
+
+    position:
+      name: Position
+      required: false
+      default: top_right
+      selector:
+        select:
+          options:
+            - top_left
+            - top_right
+            - bottom_left
+            - bottom_right
+
+    size:
+      name: Size preset
+      description: Small/Medium/Large preset. If you want a custom pixel size, leave this empty and use **size_px**.
+      required: false
+      selector:
+        select:
+          options:
+            - small
+            - medium
+            - large
+
+    size_px:
+      name: Custom size (pixels)
+      description: 'W×H object, e.g. {"w":480,"h":270}. Leave empty if you use **size**.'
+      required: false
+      selector:
+        object:
+      example: '{"w": 640, "h": 360}'
+
+    auto_hide:
+      name: Auto-hide (seconds)
+      description: |
+        How long to keep the camera visible.
+        Use **0** for never (must be dismissed manually).
+        Valid range: 0 (never), then 5–300.
+      required: false
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 5
+          unit_of_measurement: s
+          mode: slider
+
+    show_title:
+      name: Show camera title
+      description: Show the camera title overlay (if available).
+      required: false
+      default: true
+      selector:
+        boolean:
 
 
 notify:

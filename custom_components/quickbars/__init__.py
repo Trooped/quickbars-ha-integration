@@ -50,10 +50,33 @@ ALLOWED_DOMAINS = [
     "script", "scene", "climate", "cover", "sensor", "binary_sensor",
     "lock", "alarm_control_panel", "camera", "automation", "media_player",
 ]
+# camera positions
+POS_CHOICES = ["top_left", "top_right", "bottom_left", "bottom_right"]
 
 # ----- Service Schemas -----
 QUICKBAR_SCHEMA = vol.Schema({vol.Required("alias"): cv.string})
-CAMERA_SCHEMA   = vol.Schema({vol.Required("camera_alias"): cv.string})
+
+CAMERA_SCHEMA = vol.Schema({
+    # Exactly one of these:
+    vol.Exclusive("camera_alias",  "cam_id"): cv.string,
+    vol.Exclusive("camera_entity", "cam_id"): cv.entity_id,
+
+    # Optional rendering options
+    vol.Optional("position"): vol.In(POS_CHOICES),
+
+    # Either preset size OR custom size in px
+    vol.Exclusive("size", "cam_size"): vol.In(["small", "medium", "large"]),
+    vol.Exclusive("size_px", "cam_size"): vol.Schema({
+        vol.Required("w"): vol.All(vol.Coerce(int), vol.Range(min=48, max=3840)),
+        vol.Required("h"): vol.All(vol.Coerce(int), vol.Range(min=48, max=2160)),
+    }),
+
+    # Auto-hide in seconds: 0 = never, 15..300 otherwise
+    vol.Optional("auto_hide", default=30): vol.All(vol.Coerce(int), vol.Range(min=0, max=300)),
+
+    # Show title overlay?
+    vol.Optional("show_title", default=True): cv.boolean,
+})
 
 
 # ============ Connectivity (Coordinator) ============
@@ -213,6 +236,54 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
                 p = f"local/{p}"
             return f"{base}/{p}"
         return None
+    
+    async def handle_camera(call: ServiceCall) -> None:
+        """
+        Fire quickbars.open with camera info.
+        The TV app should have imported the camera (has MJPEG URL) so alias/entity can be resolved client-side.
+        """
+        data: dict[str, Any] = {}
+
+        alias = call.data.get("camera_alias")
+        entity = call.data.get("camera_entity")
+
+        if alias:
+            data["camera_alias"] = alias
+        if entity:
+            data["camera_entity"] = entity  # optional: your app can match by entity_id
+
+        # Extra options
+        pos = call.data.get("position")
+        if pos in POS_CHOICES:
+            data["position"] = pos
+
+        if "size" in call.data:
+            data["size"] = call.data["size"]  # "small" | "medium" | "large"
+        elif "size_px" in call.data:
+            sp = call.data["size_px"] or {}
+            try:
+                w = int(sp.get("w")); h = int(sp.get("h"))
+                if w > 0 and h > 0:
+                    data["size_px"] = {"w": w, "h": h}
+            except Exception:
+                pass
+
+        auto_hide = call.data.get("auto_hide")
+        if isinstance(auto_hide, int):
+            # 0 = never (show until dismissed). Otherwise 5..300
+            if auto_hide != 0 and auto_hide < 5:
+                auto_hide = 5
+            data["auto_hide"] = auto_hide
+
+        show_title = call.data.get("show_title")
+        if isinstance(show_title, bool):
+            data["show_title"] = show_title
+
+        # Tell the TV app to show the camera overlay
+        hass.bus.async_fire("quickbars.open", data)
+
+    # Register or update the service
+    hass.services.async_register(DOMAIN, "camera_toggle", handle_camera, CAMERA_SCHEMA)
 
     async def _svc_notify(call: ServiceCall) -> None:
         entry2 = _entry_for_device(call.data.get("device_id"))
@@ -435,3 +506,5 @@ async def _abs_media_url(hass, spec) -> str | None:
             return url
 
     return None
+
+

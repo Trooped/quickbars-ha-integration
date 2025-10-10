@@ -598,6 +598,12 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
         cur_show_time = bool(qb.get("showTimeOnQuickBar", True))
         cur_alias = qb.get("haTriggerAlias") or ""
         cur_domains = list(qb.get("autoCloseQuickBarDomains") or [])
+        cur_bg_mode = qb.get("backgroundColor") or "colorSurface"
+        cur_on_mode = qb.get("onStateColor") or "colorPrimary"
+        cur_bg_rgb = list(qb.get("customBackgroundColor") or [24, 24, 24])   # sensible dark-ish default
+        cur_on_rgb = list(qb.get("customOnStateColor") or [255, 204, 0])     # visible accent default
+        cur_use_bg_custom = (cur_bg_mode == "custom")
+        cur_use_on_custom = (cur_on_mode == "custom")
 
         if user_input is None:
             schema = vol.Schema({
@@ -618,6 +624,11 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                         "multiple": True
                     }
                 }),
+                vol.Required("use_custom_bg", default=cur_use_bg_custom): selector({"boolean": {}}),
+                vol.Optional("bg_rgb", default=cur_bg_rgb): selector({"color_rgb": {}}),
+
+                vol.Required("use_custom_on_state", default=cur_use_on_custom): selector({"boolean": {}}),
+                vol.Optional("on_rgb", default=cur_on_rgb): selector({"color_rgb": {}}),
             })
             return self.async_show_form(
                 step_id="qb_manage",
@@ -644,6 +655,24 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
         qb["showTimeOnQuickBar"] = bool(user_input.get("show_time_on_quickbar", cur_show_time))
         qb["haTriggerAlias"] = user_input.get("ha_trigger_alias", cur_alias)
         qb["autoCloseQuickBarDomains"] = list(user_input.get("auto_close_domains") or cur_domains)
+
+        use_bg = bool(user_input.get("use_custom_bg", cur_use_bg_custom))
+        use_on = bool(user_input.get("use_custom_on_state", cur_use_on_custom))
+
+        if use_bg:
+            qb["backgroundColor"] = "custom"
+            qb["customBackgroundColor"] = list(user_input.get("bg_rgb") or cur_bg_rgb)
+        else:
+            # keep prior theme key or reset to default theme name
+            qb["backgroundColor"] = cur_bg_mode if cur_bg_mode != "custom" else "colorSurface"
+            qb.pop("customBackgroundColor", None)
+
+        if use_on:
+            qb["onStateColor"] = "custom"
+            qb["customOnStateColor"] = list(user_input.get("on_rgb") or cur_on_rgb)
+        else:
+            qb["onStateColor"] = cur_on_mode if cur_on_mode != "custom" else "colorPrimary"
+            qb.pop("customOnStateColor", None)
 
         # Push ONLY quick_bars back
         try:

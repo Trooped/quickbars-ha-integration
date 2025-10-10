@@ -530,6 +530,8 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
         for idx, qb in enumerate(qb_list):
             name = qb.get("name") or f"QuickBar {idx+1}"
             options.append({"label": name, "value": str(idx)})
+        
+        options.append({"label": "➕ New QuickBar", "value": "new"})
 
         # Default to previously selected or first
         default_idx = self._qb_index if isinstance(self._qb_index, int) else 0
@@ -547,13 +549,39 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                 data_schema=schema,
                 description_placeholders={
                     "title": "Manage QuickBars",
-                    "description": "Select a QuickBar to edit."
+                    "description": "Select a QuickBar to edit, or create a new one."
                 },
             )
 
+        choice = str(user_input.get("quickbar", str(default_idx)))
+
+        if choice == "new":
+            # Create a new QuickBar with unique name
+            existing_names = { (qb.get("name") or "").strip().casefold() for qb in qb_list }
+            base = "QuickBar"
+            suffix = 1
+            while f"{base} {suffix}".casefold() in existing_names:
+                suffix += 1
+            new_qb = {
+                "name": f"{base} {suffix}",
+                "savedEntityIds": [],
+                "showNameInOverlay": True,
+                "showTimeOnQuickBar": True,
+                "backgroundColor": "colorSurface",
+                "backgroundOpacity": 90,
+                "onStateColor": "colorPrimary",
+                "position": "RIGHT",          # enum name expected by the TV app
+                "useGridLayout": False,
+            }
+            qb_list.append(new_qb)
+            # Persist the new list into our working snapshot (in-memory)
+            self._snapshot["quick_bars"] = qb_list
+            self._qb_index = len(qb_list) - 1
+            return await self.async_step_qb_manage()
+
         # Persist choice and jump into your existing editor (unchanged)
         try:
-            self._qb_index = int(user_input.get("quickbar", str(default_idx)))
+            self._qb_index = int(choice)
         except Exception:
             self._qb_index = default_idx
         return await self.async_step_qb_manage()
@@ -604,6 +632,9 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
         cur_on_rgb = list(qb.get("customOnStateColor") or [255, 204, 0])     # visible accent default
         cur_use_bg_custom = (cur_bg_mode == "custom")
         cur_use_on_custom = (cur_on_mode == "custom")
+        cur_pos = (qb.get("position") or "RIGHT").upper()
+        cur_use_grid = bool(qb.get("useGridLayout", False))
+
 
         if user_input is None:
             schema = vol.Schema({
@@ -624,6 +655,20 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                         "multiple": True
                     }
                 }),
+
+                vol.Required("position", default=cur_pos): selector({
+                    "select": {
+                        "options": [
+                            {"label": "Right",  "value": "RIGHT"},
+                            {"label": "Left",   "value": "LEFT"},
+                            {"label": "Top",    "value": "TOP"},
+                            {"label": "Bottom", "value": "BOTTOM"},
+                        ],
+                        "mode": "dropdown"
+                    }
+                }),
+                vol.Required("use_grid_layout", default=cur_use_grid): selector({"boolean": {}}),
+
                 vol.Required("use_custom_bg", default=cur_use_bg_custom): selector({"boolean": {}}),
                 vol.Optional("bg_rgb", default=cur_bg_rgb): selector({"color_rgb": {}}),
 
@@ -635,7 +680,10 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                 data_schema=schema,
                 description_placeholders={
                     "title": "Manage QuickBar",
-                    "description": "Adjust settings and submit to save. Use Back to pick a different QuickBar."
+                    "description": (
+                        "Adjust settings and submit to save. "
+                        "Note: Top/Bottom/Left position and Grid layout are Plus features."
+                    ),
                 },
             )
 
@@ -648,14 +696,80 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                 normalized.append(eid)
                 seen.add(eid)
 
-        # Apply edits in memory
-        qb["name"] = user_input.get("quickbar_name", cur_name)
+        # ---- Name uniqueness check (case-insensitive against other QuickBars) ----
+        new_name = (user_input.get("quickbar_name", cur_name) or "").strip()
+        names_ci = {
+            (x.get("name") or "").strip().casefold()
+            for i, x in enumerate(qb_list) if i != self._qb_index
+        }
+        if new_name and new_name.casefold() in names_ci:
+            # Rebuild form with the user's attempted values and show an error
+            attempted_pos = (user_input.get("position", cur_pos) or "RIGHT").upper()
+            attempted_grid = bool(user_input.get("use_grid_layout", cur_use_grid))
+
+            schema = vol.Schema({
+                vol.Required("quickbar_name", default=new_name): str,
+                vol.Optional("saved_entities", default=normalized): selector({
+                    "select": {"options": saved_options, "multiple": True}
+                }),
+                vol.Required("show_name_on_overlay", default=bool(user_input.get("show_name_on_quickbar", cur_show_name))): selector({"boolean": {}}),
+                vol.Required("show_time_on_quickbar", default=bool(user_input.get("show_time_on_quickbar", cur_show_time))): selector({"boolean": {}}),
+                vol.Optional("ha_trigger_alias", default=user_input.get("ha_trigger_alias", cur_alias)): str,
+                vol.Optional("auto_close_domains", default=list(user_input.get("auto_close_domains") or cur_domains)): selector({
+                    "select": {
+                        "options": [
+                            "light","switch","button","input_boolean","input_button",
+                            "script","scene","automation","camera"
+                        ],
+                        "multiple": True
+                    }
+                }),
+                vol.Required("position", default=attempted_pos): selector({
+                    "select": {
+                        "options": [
+                            {"label": "Right",  "value": "RIGHT"},
+                            {"label": "Left",   "value": "LEFT"},
+                            {"label": "Top",    "value": "TOP"},
+                            {"label": "Bottom", "value": "BOTTOM"},
+                        ],
+                        "mode": "dropdown"
+                    }
+                }),
+                vol.Required("use_grid_layout", default=attempted_grid): selector({"boolean": {}}),
+                vol.Required("use_custom_bg", default=bool(user_input.get("use_custom_bg", cur_use_bg_custom))): selector({"boolean": {}}),
+                vol.Optional("bg_rgb", default=list(user_input.get("bg_rgb") or cur_bg_rgb)): selector({"color_rgb": {}}),
+                vol.Required("use_custom_on_state", default=bool(user_input.get("use_custom_on_state", cur_use_on_custom))): selector({"boolean": {}}),
+                vol.Optional("on_rgb", default=list(user_input.get("on_rgb") or cur_on_rgb)): selector({"color_rgb": {}}),
+            })
+            return self.async_show_form(
+                step_id="qb_manage",
+                data_schema=schema,
+                errors={"base": "name_taken"},
+                description_placeholders={
+                    "title": "Manage QuickBar",
+                    "description": (
+                        "Adjust settings and submit to save. "
+                        "Note: Top/Bottom/Left position and Grid layout are Plus features."
+                    ),
+                },
+            )
+
+        # ---- Apply edits (safe to mutate after uniqueness passes) ----
+        qb["name"] = new_name or cur_name
         qb["savedEntityIds"] = normalized
         qb["showNameInOverlay"] = bool(user_input.get("show_name_on_overlay", cur_show_name))
         qb["showTimeOnQuickBar"] = bool(user_input.get("show_time_on_quickbar", cur_show_time))
         qb["haTriggerAlias"] = user_input.get("ha_trigger_alias", cur_alias)
         qb["autoCloseQuickBarDomains"] = list(user_input.get("auto_close_domains") or cur_domains)
 
+        # ---- Position & Grid (grid only meaningful for LEFT/RIGHT) ----
+        pos = (user_input.get("position", cur_pos) or "RIGHT").upper()
+        req_grid = bool(user_input.get("use_grid_layout", cur_use_grid))
+        use_grid = req_grid and pos in ("LEFT", "RIGHT")
+        qb["position"] = pos
+        qb["useGridLayout"] = use_grid
+
+        # ---- Colors (your existing logic kept intact) ----
         use_bg = bool(user_input.get("use_custom_bg", cur_use_bg_custom))
         use_on = bool(user_input.get("use_custom_on_state", cur_use_on_custom))
 
@@ -663,7 +777,6 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
             qb["backgroundColor"] = "custom"
             qb["customBackgroundColor"] = list(user_input.get("bg_rgb") or cur_bg_rgb)
         else:
-            # keep prior theme key or reset to default theme name
             qb["backgroundColor"] = cur_bg_mode if cur_bg_mode != "custom" else "colorSurface"
             qb.pop("customBackgroundColor", None)
 
@@ -673,6 +786,8 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
         else:
             qb["onStateColor"] = cur_on_mode if cur_on_mode != "custom" else "colorPrimary"
             qb.pop("customOnStateColor", None)
+
+        
 
         # Push ONLY quick_bars back
         try:
@@ -694,12 +809,23 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                     "select": {
                         "options": [
                             "light","switch","button","input_boolean","input_button",
-                            "script","scene",
-                            "automation","camera"
+                            "script","scene","automation","camera"
                         ],
                         "multiple": True
                     }
                 }),
+                vol.Required("position", default=qb.get("position", cur_pos)): selector({
+                    "select": {
+                        "options": [
+                            {"label": "Right",  "value": "RIGHT"},
+                            {"label": "Left",   "value": "LEFT"},
+                            {"label": "Top",    "value": "TOP"},
+                            {"label": "Bottom", "value": "BOTTOM"},
+                        ],
+                        "mode": "dropdown"
+                    }
+                }),
+                vol.Required("use_grid_layout", default=qb.get("useGridLayout", cur_use_grid)): selector({"boolean": {}}),
             })
             return self.async_show_form(
                 step_id="qb_manage",

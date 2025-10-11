@@ -570,8 +570,9 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                 "backgroundColor": "colorSurface",
                 "backgroundOpacity": 90,
                 "onStateColor": "colorPrimary",
-                "position": "RIGHT",          # enum name expected by the TV app
+                "position": "RIGHT",          
                 "useGridLayout": False,
+                "autoCloseQuickBarDomains": [],
             }
             qb_list.append(new_qb)
             # Persist the new list into our working snapshot (in-memory)
@@ -628,6 +629,7 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
         cur_domains = list(qb.get("autoCloseQuickBarDomains") or [])
         cur_bg_mode = qb.get("backgroundColor") or "colorSurface"
         cur_on_mode = qb.get("onStateColor") or "colorPrimary"
+        cur_bg_opacity = int(qb.get("backgroundOpacity", 90))
         cur_bg_rgb = list(qb.get("customBackgroundColor") or [24, 24, 24])   # sensible dark-ish default
         cur_on_rgb = list(qb.get("customOnStateColor") or [255, 204, 0])     # visible accent default
         cur_use_bg_custom = (cur_bg_mode == "custom")
@@ -668,6 +670,10 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                     }
                 }),
                 vol.Required("use_grid_layout", default=cur_use_grid): selector({"boolean": {}}),
+
+                vol.Required("background_opacity", default=cur_bg_opacity): selector({
+                    "number": { "min": 0, "max": 100, "step": 1, "mode": "slider" }
+                }),
 
                 vol.Required("use_custom_bg", default=cur_use_bg_custom): selector({"boolean": {}}),
                 vol.Optional("bg_rgb", default=cur_bg_rgb): selector({"color_rgb": {}}),
@@ -736,6 +742,9 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                     }
                 }),
                 vol.Required("use_grid_layout", default=attempted_grid): selector({"boolean": {}}),
+                vol.Required("background_opacity", default=int(user_input.get("background_opacity", cur_bg_opacity))): selector({
+                    "number": { "min": 0, "max": 100, "step": 1, "mode": "slider" }
+                }),
                 vol.Required("use_custom_bg", default=bool(user_input.get("use_custom_bg", cur_use_bg_custom))): selector({"boolean": {}}),
                 vol.Optional("bg_rgb", default=list(user_input.get("bg_rgb") or cur_bg_rgb)): selector({"color_rgb": {}}),
                 vol.Required("use_custom_on_state", default=bool(user_input.get("use_custom_on_state", cur_use_on_custom))): selector({"boolean": {}}),
@@ -769,7 +778,9 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
         qb["position"] = pos
         qb["useGridLayout"] = use_grid
 
-        # ---- Colors (your existing logic kept intact) ----
+        # ---- Colors ----
+        qb["backgroundOpacity"] = int(user_input.get("background_opacity", cur_bg_opacity))
+
         use_bg = bool(user_input.get("use_custom_bg", cur_use_bg_custom))
         use_on = bool(user_input.get("use_custom_on_state", cur_use_on_custom))
 
@@ -826,6 +837,13 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                     }
                 }),
                 vol.Required("use_grid_layout", default=qb.get("useGridLayout", cur_use_grid)): selector({"boolean": {}}),
+                vol.Required("background_opacity", default=int(qb.get("backgroundOpacity", cur_bg_opacity))): selector({
+                    "number": { "min": 0, "max": 100, "step": 1, "mode": "slider" }
+                }),
+                vol.Required("use_custom_bg", default=(qb.get("backgroundColor") == "custom")): selector({"boolean": {}}),
+                vol.Optional("bg_rgb", default=list(qb.get("customBackgroundColor") or cur_bg_rgb)): selector({"color_rgb": {}}),
+                vol.Required("use_custom_on_state", default=(qb.get("onStateColor") == "custom")): selector({"boolean": {}}),
+                vol.Optional("on_rgb", default=list(qb.get("customOnStateColor") or cur_on_rgb)): selector({"color_rgb": {}}),
             })
             return self.async_show_form(
                 step_id="qb_manage",

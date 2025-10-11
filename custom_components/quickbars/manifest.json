@@ -2,7 +2,7 @@
     "domain": "quickbars",
     "name": "QuickBars for Home Assistant",
     "documentation": "https://quickbars.app",
-    "requirements": ["quickbars-bridge>=0.0.4"],
+    "requirements": ["quickbars-bridge>=0.0.6"],
     "dependencies": ["zeroconf"],
     "version": "0.0.2",
     "codeowners": ["@Trooped"],

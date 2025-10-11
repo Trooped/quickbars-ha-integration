@@ -216,6 +216,16 @@ notify:
         {"path": "images/quickbars-hero.png"} or
         {"media_id": "media-source://media_source/local/images/quickbars-hero.png"}
 
+    image_media:
+      name: Image (Media Browser)
+      description: Select an image from Home Assistant's Media Browser (My media).
+          This is a shortcut for the **image** field above. Use only one.
+      required: false
+      selector:
+        media:
+          accept:
+            - image/*
+
     sound:
       name: Sound
       description: |
@@ -230,7 +240,18 @@ notify:
         {"url": "https://example.com/file.mp3"} or
         {"path": "chimes/ding.mp3"} or
         {"media_id": "media-source://media_source/local/chimes/ding.mp3"}
-      
+
+  
+
+    sound_media:
+      name: Sound (Media Browser)
+      description: Select an audio file from Home Assistant's Media Browser (My media).
+          This is a shortcut for the **sound** field above. Use only one.
+      required: false
+      selector:
+        media:
+          accept:
+            - audio/*
 
     sound_volume_percent:
       name: Sound volume (%)

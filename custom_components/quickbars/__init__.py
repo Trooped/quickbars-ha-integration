@@ -316,17 +316,57 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
             # Try to inline the SVG (may fail if HA has no internet)
             icon_svg_data_uri = await _mdi_svg_data_uri(hass, mdi_icon)
 
-        img_url = None
-        img_spec = call.data.get("image")
-        if isinstance(img_spec, dict) and "media_id" in img_spec:
-            img_url = await _abs_media_url(hass, img_spec)
-        else:
-            img_url = _abs(img_spec)  
+        # ---- image: support url/path or media browser (image_media) ----
 
-        # Sound: support url, path, or media-source via the new object; also accept legacy sound_url
+        img_url = None
+
+        img_sel = call.data.get("image_media")
+        if img_sel and not call.data.get("image"):
+            # 1) Prefer the still thumbnail when HA provides it (image entities)
+            thumb = _selector_thumbnail(img_sel)
+            if thumb:
+                # Signs + absolutizes '/api/image_proxy/...'
+                img_url = await _abs_media_url(hass, thumb)
+            else:
+                # 2) Fallback: resolve media-source id and force still endpoint
+                mid = _media_id_from_selector(img_sel)
+                if mid:
+                    tmp = await _abs_media_url(hass, {"media_id": mid})
+                    img_url = _ensure_still_image_url(tmp)
+
+        if img_url is None:
+            # Legacy field supports object or string
+            img_spec = call.data.get("image")
+            if isinstance(img_spec, dict) and ("media_id" in img_spec or "media_content_id" in img_spec):
+                mid = img_spec.get("media_id") or img_spec.get("media_content_id")
+                if mid:
+                    tmp = await _abs_media_url(hass, {"media_id": mid})
+                    img_url = _ensure_still_image_url(tmp)
+                else:
+                    img_url = await _abs_media_url(hass, img_spec)  # url/path object
+            else:
+                img_url = await _abs_media_url(hass, img_spec)      # plain url or /local/...
+
+        # ---- sound: support url/path/object OR media browser (sound_media) ----
         sound_url = None
-        if call.data.get("sound"):
-            sound_url = await _abs_media_url(hass, call.data["sound"])
+        snd_sel = call.data.get("sound_media")
+        if snd_sel and not call.data.get("sound"):
+            mid = _media_id_from_selector(snd_sel)                  # <-- new
+            if mid:
+                sound_url = await _abs_media_url(hass, {"media_id": mid})
+
+        if sound_url is None:
+            snd_spec = call.data.get("sound")
+            if isinstance(snd_spec, dict) and ("media_id" in snd_spec or "media_content_id" in snd_spec):
+                mid = snd_spec.get("media_id") or snd_spec.get("media_content_id")
+                if mid:
+                    sound_url = await _abs_media_url(hass, {"media_id": mid})
+                else:
+                    sound_url = await _abs_media_url(hass, snd_spec)
+            else:
+                sound_url = await _abs_media_url(hass, snd_spec)
+
+
 
         sound_pct = None
         snd = call.data.get("sound")
@@ -395,6 +435,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
     # Register interactive prompt service
     hass.services.async_register(DOMAIN, "notify", _svc_notify)
 
+
     # Bridge TV button clicks -> HA event (dynamic notifications)
     def _on_action(evt):
         data = evt.data or {}
@@ -459,51 +500,78 @@ async def _mdi_svg_data_uri(hass, mdi_icon: str) -> str | None:
         return None
     
 async def _abs_media_url(hass, spec) -> str | None:
-    """
-    Resolve a media spec into an absolute, fetchable URL.
-    Supports:
-      - {"url": "https://..."}                  -> returned as-is
-      - {"path": "sub/dir/file.ext"}            -> <base>/local/sub/dir/file.ext
-      - {"media_id": "media-source://..."}      -> resolved & signed URL
-      - "https://..." (plain str)               -> returned as-is
-      - "/local/..." (plain str)                -> prefixed with base
-    """
+    """Return absolute, fetchable URL for strings, {url|path|media_id}, or media-source items."""
     if not spec:
         return None
 
-    # plain string (absolute URL or /local path)
-    if isinstance(spec, str):
-        if spec.startswith(("http://", "https://")):
-            return spec
-        if spec.startswith("/local/") or spec.startswith("local/"):
-            base = get_url(hass)
-            p = spec.lstrip("/")
-            return f"{base}/{p}"
-        return spec  # unknown string; let the app try
+    base = get_url(hass)
 
-    # object with url / path / media_id
+    def _abs_path(path: str) -> str:
+        p = _ensure_still_image_url(path)
+        if p.startswith(("http://", "https://")):
+            return p
+        if p.startswith("/api/"):
+            # SIGN (no await here)
+            signed = async_sign_path(hass, p, timedelta(seconds=60))
+            return f"{base}{signed}"
+        if p.startswith("/"):
+            return f"{base}{p}"
+        if p.startswith("local/"):
+            return f"{base}/{p}"
+        # default: give back as-is
+        return p
+
+    # STRING input
+    if isinstance(spec, str):
+        return _abs_path(spec)
+
+    # OBJECT input
     if isinstance(spec, dict):
         if spec.get("url"):
             return spec["url"]
-
         if spec.get("path"):
-            base = get_url(hass)
+            # normalize to /local/<path>
             p = str(spec["path"]).lstrip("/")
             if not p.startswith("local/"):
                 p = f"local/{p}"
-            return f"{base}/{p}"
-
-        media_id = spec.get("media_id")
-        if media_id:
-            # Resolve media_source to a URL local to HA
-            play_item = await media_source.async_resolve_media(hass, media_id, None)
+            return _abs_path(p)
+        mid = spec.get("media_id") or spec.get("media_content_id")
+        if mid:
+            play_item = await media_source.async_resolve_media(hass, str(mid), None)
             url = async_process_play_media_url(hass, play_item.url)
-            # If HA returns a relative URL (starts with '/'), sign it so no auth header is needed
-            if url.startswith("/"):
-                signed_path = await async_sign_path(hass, url, timedelta(seconds=60))
-                return f"{get_url(hass)}{signed_path}"
-            return url
+            return _abs_path(url)
 
     return None
 
 
+
+
+def _media_id_from_selector(val: Any) -> str | None:
+    """
+    Accept the media selector's mapping (e.g. {"media_content_id": "media-source://..."}),
+    or a raw string, and return a media-source id string.
+    """
+    if isinstance(val, dict):
+        mid = val.get("media_content_id") or val.get("media_id")
+        return str(mid) if mid else None
+    if isinstance(val, str):
+        return val
+    return None
+
+def _ensure_still_image_url(u):
+    if isinstance(u, str):
+        # turn ..._stream/... into the single-frame endpoint
+        u = u.replace("/api/camera_proxy_stream/", "/api/camera_proxy/")
+        u = u.replace("/api/image_proxy_stream/", "/api/image_proxy/")
+    return u
+
+def _selector_thumbnail(sel) -> str | None:
+    """If a media selector dict includes a thumbnail (e.g., for image entities),
+    return the HA API path like '/api/image_proxy/image.xyz'."""
+    if isinstance(sel, dict):
+        meta = sel.get("metadata")
+        if isinstance(meta, dict):
+            thumb = meta.get("thumbnail")
+            if isinstance(thumb, str) and thumb:
+                return thumb
+    return None

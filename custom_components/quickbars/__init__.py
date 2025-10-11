@@ -50,7 +50,10 @@ ALLOWED_DOMAINS = [
 POS_CHOICES = ["top_left", "top_right", "bottom_left", "bottom_right"]
 
 # ----- Service Schemas -----
-QUICKBAR_SCHEMA = vol.Schema({vol.Required("alias"): cv.string})
+QUICKBAR_SCHEMA = vol.Schema({
+    vol.Required("alias"): cv.string,
+    vol.Optional("device_id"): cv.string,      
+})
 
 CAMERA_SCHEMA = vol.Schema({
     # Exactly one of these:
@@ -72,6 +75,8 @@ CAMERA_SCHEMA = vol.Schema({
 
     # Show title overlay?
     vol.Optional("show_title", default=True): cv.boolean,
+
+    vol.Optional("device_id"): cv.string, 
 })
 
 
@@ -169,15 +174,7 @@ class _Presence:
 
 
 async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
-    """Register two tiny services that just fire quickbars.open."""
-    async def handle_quickbar(call: ServiceCall) -> None:
-        hass.bus.async_fire(EVENT_NAME, {"alias": call.data["alias"]})
-
-    async def handle_camera(call: ServiceCall) -> None:
-        hass.bus.async_fire(EVENT_NAME, {"camera_alias": call.data["camera_alias"]})
-
-    hass.services.async_register(DOMAIN, "quickbar_toggle", handle_quickbar, QUICKBAR_SCHEMA)
-    hass.services.async_register(DOMAIN, "camera_toggle", handle_camera, CAMERA_SCHEMA)
+    """ No global (unscoped) services here; we register them per-entry below."""
     return True
 
 
@@ -219,19 +216,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
         if len(entries) == 1:
             return entries[0]
         raise ValueError("Multiple QuickBars entries present—supply device_id")
+    
 
-    def _abs(spec):
-        if not isinstance(spec, dict):
-            return None
-        if spec.get("url"):
-            return spec["url"]
-        if spec.get("path"):
-            base = get_url(hass)
-            p = str(spec["path"]).lstrip("/")
-            if not p.startswith("local/"):
-                p = f"local/{p}"
-            return f"{base}/{p}"
-        return None
+    async def handle_quickbar(call: ServiceCall) -> None:
+        data: dict[str, Any] = {}
+
+        # Optional device targeting
+        target_device_id = call.data.get("device_id")
+        if target_device_id:
+            try:
+                entry2 = _entry_for_device(target_device_id)
+                data["id"] = entry2.data.get("id") or entry2.entry_id
+            except Exception:
+                pass
+
+        # Required param
+        data["alias"] = call.data["alias"]
+
+        hass.bus.async_fire(EVENT_NAME, data)
+
+    hass.services.async_register(DOMAIN, "quickbar_toggle", handle_quickbar, QUICKBAR_SCHEMA)
     
     async def handle_camera(call: ServiceCall) -> None:
         """
@@ -239,6 +243,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
         The TV app should have imported the camera (has MJPEG URL) so alias/entity can be resolved client-side.
         """
         data: dict[str, Any] = {}
+
+        target_device_id = call.data.get("device_id")
+        if target_device_id:
+            try:
+                entry2 = _entry_for_device(target_device_id)
+                data["id"] = entry2.data.get("id") or entry2.entry_id
+            except Exception:
+                pass
 
         alias = call.data.get("camera_alias")
         entity = call.data.get("camera_entity")

@@ -2,6 +2,15 @@ quickbar_toggle:
   name: Toggle QuickBar
   description: Open/close a QuickBar by alias (acts as a toggle on the Android app).
   fields:
+    device_id:
+      name: Target QuickBars device
+      required: false
+      description: >
+        Select a specific QuickBars device. If omitted, the command is sent
+        to all connected QuickBars devices (default).
+      selector:
+        device:
+          integration: quickbars
     alias:
       name: Alias
       description: QuickBar alias defined in the Android TV app.
@@ -18,6 +27,16 @@ camera_toggle:
     Provide either an alias (as known to QuickBars) or select a Home Assistant camera entity.
 
   fields:
+    device_id:
+      name: Target QuickBars device
+      required: false
+      description: >
+        Select a specific QuickBars device. If omitted, the camera PiP is sent
+        to all connected QuickBars devices (default).
+      selector:
+        device:
+          integration: quickbars
+
     camera_alias:
       name: Camera alias (QuickBars)
       description: |

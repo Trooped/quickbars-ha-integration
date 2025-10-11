@@ -282,7 +282,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
     hass.services.async_register(DOMAIN, "camera_toggle", handle_camera, CAMERA_SCHEMA)
 
     async def _svc_notify(call: ServiceCall) -> None:
-        entry2 = _entry_for_device(call.data.get("device_id"))
+        target_device_id = call.data.get("device_id")
+        entry2 = None
+        if target_device_id:
+            try:
+                entry2 = _entry_for_device(target_device_id)
+            except Exception:
+                entry2 = None
 
         # ---- normalize overlay color to #RRGGBB (from RGB selector or string) ----
 
@@ -403,15 +409,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
             "actions":      call.data.get("actions") or [],
             "duration":     chosen_duration,
             "position":     call.data.get("position"),
-            "color":        color_hex,                      
+            "color":        color_hex,
             "transparency": call.data.get("transparency"),
             "interrupt":    bool(call.data.get("interrupt", False)),
             "image_url":    img_url,
-            "sound_url":    sound_url,                      
+            "sound_url":    sound_url,
             "sound_volume_percent": sound_pct,
             "icon_svg_data_uri": icon_svg_data_uri,       
             "icon_url":     icon_url,                      # fallback if SVG fetch failed
         }
+
+        if entry2:
+            payload["id"] = entry2.data.get("id") or entry2.entry_id
+
         payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
 
         # Correlation id: keep provided or generate one (to match old behavior)

@@ -8,25 +8,16 @@ from typing import Any
 import asyncio
 import logging
 
-import base64
-
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import zeroconf as ha_zc
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.network import get_url
-from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from zeroconf import ServiceStateChange
 from zeroconf.asyncio import AsyncServiceBrowser
-from homeassistant.components import media_source
-from homeassistant.components.media_player.browse_media import async_process_play_media_url
-from homeassistant.components.http.auth import async_sign_path
 
 import secrets
 
@@ -40,12 +31,6 @@ _LOGGER = logging.getLogger(__name__)
 EVENT_NAME = "quickbars.open"
 SERVICE_TYPE = "_quickbars._tcp.local."
 
-# Allowed domains (inlined to avoid bad import paths)
-ALLOWED_DOMAINS = [
-    "light", "switch", "button", "fan", "input_boolean", "input_button",
-    "script", "scene", "climate", "cover", "sensor", "binary_sensor",
-    "lock", "alarm_control_panel", "camera", "automation", "media_player",
-]
 # camera positions
 POS_CHOICES = ["top_left", "top_right", "bottom_left", "bottom_right"]
 
@@ -174,15 +159,122 @@ class _Presence:
 
 
 async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
-    """ No global (unscoped) services here; we register them per-entry below."""
+    """Register global service actions so they exist even without entries."""
+
+    def _entry_for_device(device_id: str | None):
+        """Resolve our config entry from a HA device_id; fallback if only one entry exists."""
+        entries = hass.config_entries.async_entries(DOMAIN)
+        if device_id:
+            dev = dr.async_get(hass).async_get(device_id)
+            if dev:
+                ident = next((v for (d, v) in dev.identifiers if d == DOMAIN), None)
+                if ident:
+                    for ent in entries:
+                        if ent.data.get("id") == ident or ent.entry_id == ident:
+                            return ent
+        if len(entries) == 1:
+            return entries[0]
+        return None  # ambiguous or none configured
+
+    async def handle_quickbar(call: ServiceCall) -> None:
+        data: dict[str, Any] = {"alias": call.data["alias"]}
+        target_device_id = call.data.get("device_id")
+        if target_device_id:
+            ent = _entry_for_device(target_device_id)
+            if ent:
+                data["id"] = ent.data.get("id") or ent.entry_id
+        hass.bus.async_fire(EVENT_NAME, data)
+
+    hass.services.async_register(DOMAIN, "quickbar_toggle", handle_quickbar, QUICKBAR_SCHEMA)
+
+    async def handle_camera(call: ServiceCall) -> None:
+        data: dict[str, Any] = {}
+        # optional device targeting
+        target_device_id = call.data.get("device_id")
+        if target_device_id:
+            ent = _entry_for_device(target_device_id)
+            if ent:
+                data["id"] = ent.data.get("id") or ent.entry_id
+
+        # id/alias
+        alias = call.data.get("camera_alias")
+        entity = call.data.get("camera_entity")
+        if alias:
+            data["camera_alias"] = alias
+        if entity:
+            data["camera_entity"] = entity
+
+        # options
+        pos = call.data.get("position")
+        if pos in POS_CHOICES:
+            data["position"] = pos
+        if "size" in call.data:
+            data["size"] = call.data["size"]  # small|medium|large
+        elif "size_px" in call.data:
+            sp = call.data["size_px"] or {}
+            try:
+                w = int(sp.get("w")); h = int(sp.get("h"))
+                if w > 0 and h > 0:
+                    data["size_px"] = {"w": w, "h": h}
+            except Exception:
+                pass
+        auto_hide = call.data.get("auto_hide")
+        if isinstance(auto_hide, int):
+            if auto_hide != 0 and auto_hide < 5:
+                auto_hide = 5
+            data["auto_hide"] = auto_hide
+        show_title = call.data.get("show_title")
+        if isinstance(show_title, bool):
+            data["show_title"] = show_title
+
+        hass.bus.async_fire(EVENT_NAME, data)
+
+    hass.services.async_register(DOMAIN, "camera_toggle", handle_camera, CAMERA_SCHEMA)
+
+    async def _svc_notify(call: ServiceCall) -> None:
+        # Resolve entry for optional device scoping
+        target_device_id = call.data.get("device_id")
+        entry2 = _entry_for_device(target_device_id) if target_device_id else None
+
+        # Build payload via your helper (unchanged behavior)
+        payload = await build_notify_payload(hass, call.data)
+
+        # Add integration id if we targeted a device
+        if entry2:
+            payload["id"] = entry2.data.get("id") or entry2.entry_id
+
+        # Correlation id (use provided or generate)
+        cid = call.data.get("cid") or secrets.token_urlsafe(8)
+        payload["cid"] = cid
+
+        # Fire events
+        hass.bus.async_fire("quickbars.notify", payload)
+
+        # Optional: emit a metadata event if we have device metadata available
+        if entry2:
+            dev_meta = hass.data.get(DOMAIN, {}).get(entry2.entry_id, {})
+            dev_id = dev_meta.get("device_id")
+            hass.bus.async_fire(
+                f"{DOMAIN}.notification_sent",
+                {
+                    **({"device_id": dev_id} if dev_id else {}),
+                    "entry_id": entry2.entry_id,
+                    "cid": cid,
+                    "title": payload.get("title"),
+                },
+            )
+
+    # Note: no voluptuous schema for notify (by design)
+    hass.services.async_register(DOMAIN, "notify", _svc_notify)
+
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEntry) -> bool:
-    """Set up QuickBars from a config entry."""
+    """Per-entry setup: presence tracking, coordinator, device registration, and action -> HA event bridge."""
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"snapshot": None}
 
-    # Create a Device even if we expose no entities (lets us target device_id)
+    # Create a Device for device_id targeting
     dev_reg = dr.async_get(hass)
     device = dev_reg.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -192,153 +284,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
     )
     hass.data[DOMAIN][entry.entry_id]["device_id"] = device.id
 
-    # 1) Presence
+    # Presence (Zeroconf) and connectivity
     presence = _Presence(hass, entry)
     await presence.start()
 
-    # 2) Connectivity coordinator
     coordinator = QuickBarsCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
 
-    # ---------- helpers that close over hass/entry ----------
-
-    def _entry_for_device(device_id: str | None):
-        """Resolve our config entry from a HA device_id; fallback to the single entry."""
-        if device_id:
-            dev = dr.async_get(hass).async_get(device_id)
-            if dev:
-                ident = next((v for (d, v) in dev.identifiers if d == DOMAIN), None)
-                if ident:
-                    for ent in hass.config_entries.async_entries(DOMAIN):
-                        if ent.data.get("id") == ident or ent.entry_id == ident:
-                            return ent
-        entries = hass.config_entries.async_entries(DOMAIN)
-        if len(entries) == 1:
-            return entries[0]
-        raise ValueError("Multiple QuickBars entries present—supply device_id")
-    
-
-    async def handle_quickbar(call: ServiceCall) -> None:
-        data: dict[str, Any] = {}
-
-        # Optional device targeting
-        target_device_id = call.data.get("device_id")
-        if target_device_id:
-            try:
-                entry2 = _entry_for_device(target_device_id)
-                data["id"] = entry2.data.get("id") or entry2.entry_id
-            except Exception:
-                pass
-
-        # Required param
-        data["alias"] = call.data["alias"]
-
-        hass.bus.async_fire(EVENT_NAME, data)
-
-    hass.services.async_register(DOMAIN, "quickbar_toggle", handle_quickbar, QUICKBAR_SCHEMA)
-    
-    async def handle_camera(call: ServiceCall) -> None:
-        """
-        Fire quickbars.open with camera info.
-        The TV app should have imported the camera (has MJPEG URL) so alias/entity can be resolved client-side.
-        """
-        data: dict[str, Any] = {}
-
-        target_device_id = call.data.get("device_id")
-        if target_device_id:
-            try:
-                entry2 = _entry_for_device(target_device_id)
-                data["id"] = entry2.data.get("id") or entry2.entry_id
-            except Exception:
-                pass
-
-        alias = call.data.get("camera_alias")
-        entity = call.data.get("camera_entity")
-
-        if alias:
-            data["camera_alias"] = alias
-        if entity:
-            data["camera_entity"] = entity  # optional: your app can match by entity_id
-
-        # Extra options
-        pos = call.data.get("position")
-        if pos in POS_CHOICES:
-            data["position"] = pos
-
-        if "size" in call.data:
-            data["size"] = call.data["size"]  # "small" | "medium" | "large"
-        elif "size_px" in call.data:
-            sp = call.data["size_px"] or {}
-            try:
-                w = int(sp.get("w")); h = int(sp.get("h"))
-                if w > 0 and h > 0:
-                    data["size_px"] = {"w": w, "h": h}
-            except Exception:
-                pass
-
-        auto_hide = call.data.get("auto_hide")
-        if isinstance(auto_hide, int):
-            # 0 = never (show until dismissed). Otherwise 5..300
-            if auto_hide != 0 and auto_hide < 5:
-                auto_hide = 5
-            data["auto_hide"] = auto_hide
-
-        show_title = call.data.get("show_title")
-        if isinstance(show_title, bool):
-            data["show_title"] = show_title
-
-        # Tell the TV app to show the camera overlay
-        hass.bus.async_fire("quickbars.open", data)
-
-    # Register or update the service
-    hass.services.async_register(DOMAIN, "camera_toggle", handle_camera, CAMERA_SCHEMA)
-
-    async def _svc_notify(call: ServiceCall) -> None:
-        target_device_id = call.data.get("device_id")
-        entry2 = None
-        if target_device_id:
-            try:
-                entry2 = _entry_for_device(target_device_id)
-            except Exception:
-                entry2 = None
-
-        payload = await build_notify_payload(hass, call.data)
-
-        # add integration id if targeting a device
-        if entry2:
-            payload["id"] = entry2.data.get("id") or entry2.entry_id
-
-        # correlation id (keep provided or generate)
-        cid = call.data.get("cid") or secrets.token_urlsafe(8)
-        payload["cid"] = cid
-
-        # fire events
-        hass.bus.async_fire("quickbars.notify", payload)
-        if entry2:
-            hass.bus.async_fire(
-                f"{DOMAIN}.notification_sent",
-                {
-                    "device_id": hass.data[DOMAIN][entry.entry_id]["device_id"],
-                    "entry_id": entry2.entry_id,
-                    "cid": cid,
-                    "title": payload.get("title"),
-                },
-            )
-
-    # Register interactive prompt service
-    hass.services.async_register(DOMAIN, "notify", _svc_notify)
-
-
-    # Bridge TV button clicks -> HA event (dynamic notifications)
+    # Bridge TV button clicks -> HA event (per-entry)
     def _on_action(evt):
         data = evt.data or {}
-
-        # Optional scoping by integration id:
-        # If your Android client includes "id" in quickbars.action, keep this filter.
         exp_id = entry.data.get("id") or entry.entry_id
         if data.get("id") and data.get("id") != exp_id:
             return
-
         hass.bus.async_fire(
             f"{DOMAIN}.notification_action",
             {
@@ -350,10 +308,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
             },
         )
 
-    # Register the listener
     unsub_action = hass.bus.async_listen("quickbars.action", _on_action)
 
-    # Store handles for unload
     hass.data[DOMAIN][entry.entry_id].update(
         presence=presence,
         coordinator=coordinator,

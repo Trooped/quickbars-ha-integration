@@ -1,5 +1,6 @@
 quickbar_toggle:
   name: Toggle QuickBar
+  icon: mdi:television-guide
   description: Open/close a QuickBar by alias (acts as a toggle on the Android app).
   fields:
     device_id:
@@ -21,6 +22,7 @@ quickbar_toggle:
 
 camera_toggle:
   name: Show camera (PiP)
+  icon: mdi:video-wireless
   description: |
     Show a camera overlay on the TV.
     The camera MUST be imported into QuickBars and have an **MJPEG** stream URL.
@@ -116,6 +118,7 @@ camera_toggle:
 
 notify:
   name: Send a Notification using QuickBars
+  icon: mdi:message-arrow-right
   description: Show a rich notification on the TV with optional actions.
   fields:
     device_id:

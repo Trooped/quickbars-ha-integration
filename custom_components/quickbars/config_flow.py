@@ -3,17 +3,16 @@ from typing import Any, List, Dict
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.config_entries import OptionsFlow, OptionsFlowWithConfigEntry, ConfigEntry
+from homeassistant.config_entries import OptionsFlowWithConfigEntry, ConfigEntry
 from homeassistant.core import callback, State
 from homeassistant.helpers.selector import selector
 from homeassistant.helpers.network import get_url
 
-import json, logging, voluptuous as vol
-from .client import get_snapshot, post_snapshot
-
+import logging, voluptuous as vol
 import logging
 
-from .client import get_pair_code, confirm_pair
+from quickbars_bridge import QuickBarsClient
+
 from .client import ws_get_snapshot, ws_entities_replace, ws_put_snapshot, ws_entities_update, ws_ping
 from .constants import DOMAIN
 
@@ -38,7 +37,8 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         _LOGGER.debug("step_user: host=%s port=%s -> requesting /pair/code", self._host, self._port)
 
         try:
-            resp = await get_pair_code(self._host, self._port)
+            client = QuickBarsClient(self._host, self._port)
+            resp = await client.get_pair_code()
             self._pair_sid = resp.get("sid")
             masked = (
                 f"{self._pair_sid[:3]}***{self._pair_sid[-2:]}"
@@ -70,6 +70,7 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         sid = getattr(self, "_pair_sid", None)
         _LOGGER.debug("step_pair: confirming with code=%s sid=%s", (code[:1]+"***"+code[-1:]), (sid[:3]+"***"+sid[-2:] if sid else "<none>"))
 
+        client = QuickBarsClient(self._host, self._port)
         ha_name = self.hass.config.location_name or "Home Assistant"
         ha_url  = None
         try:
@@ -77,7 +78,7 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception:
             pass
 
-        resp = await confirm_pair(self._host, self._port, code, sid,
+        resp = await client.confirm_pair(code, sid,
                                    ha_instance=self._host,
                                    ha_name=ha_name,
                                    ha_url=ha_url)
@@ -125,8 +126,8 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         token = user_input["token"].strip()
 
         try:
-            from .client import set_credentials
-            res = await set_credentials(self._host, self._port, url, token)
+            client = QuickBarsClient(self._host, self._port)
+            res = await client.set_credentials(url, token)
             if not res.get("ok"):
                 # Keep the step open; show reason returned by TV app
                 reason = (res.get("reason") or "creds_invalid").replace("_", " ")
@@ -213,7 +214,8 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # NOW it’s user-initiated: request a code and jump to pair step
         try:
-            resp = await get_pair_code(self._host, self._port)
+            client = QuickBarsClient(self._host, self._port)         
+            resp = await client.get_pair_code()
             self._pair_sid = resp.get("sid")
             _LOGGER.debug(
                 "zeroconf_confirm: got pair sid=%s (masked)",

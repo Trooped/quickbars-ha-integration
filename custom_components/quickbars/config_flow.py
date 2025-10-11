@@ -13,7 +13,9 @@ import logging
 
 from quickbars_bridge import QuickBarsClient
 
-from .client import ws_get_snapshot, ws_entities_replace, ws_put_snapshot, ws_entities_update, ws_ping
+from quickbars_bridge.events import (
+    ws_get_snapshot, ws_entities_replace, ws_put_snapshot, ws_entities_update, ws_ping
+)
 from .constants import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)

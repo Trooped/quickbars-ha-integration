@@ -30,9 +30,9 @@ from homeassistant.components.http.auth import async_sign_path
 
 import secrets
 
-from .client import (
-    ws_ping,
-)
+from quickbars_bridge.events import ws_ping
+from quickbars_bridge.hass_helpers import build_notify_payload
+
 from .constants import DOMAIN  # DOMAIN = "quickbars"
 
 _LOGGER = logging.getLogger(__name__)
@@ -302,157 +302,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
             except Exception:
                 entry2 = None
 
-        # ---- normalize overlay color to #RRGGBB (from RGB selector or string) ----
+        payload = await build_notify_payload(hass, call.data)
 
-        def _clamp8(x: int) -> int:
-            return 0 if x < 0 else 255 if x > 255 else x
-
-        col_in = call.data.get("color")
-        color_hex: str | None = None
-        if isinstance(col_in, (list, tuple)) and len(col_in) == 3:
-            r, g, b = (_clamp8(int(col_in[0])), _clamp8(int(col_in[1])), _clamp8(int(col_in[2])))
-            color_hex = f"#{r:02x}{g:02x}{b:02x}"
-
-        elif isinstance(col_in, dict) and all(k in col_in for k in ("r", "g", "b")):
-            r, g, b = (_clamp8(int(col_in["r"])), _clamp8(int(col_in["g"])), _clamp8(int(col_in["b"])))
-            color_hex = f"#{r:02x}{g:02x}{b:02x}"
-
-        elif isinstance(col_in, str) and col_in.strip():
-            color_hex = col_in.strip()
-
-        # ---- resolve mdi icon to SVG data URI (no color/size knobs) ----
-        mdi_icon = call.data.get("mdi_icon")
-
-        icon_svg_data_uri = None
-        icon_url = None
-
-        if mdi_icon:
-            # Fallback URL the TV can fetch itself (works even if HA can't fetch)
-            icon_id = mdi_icon.strip().replace(":", "%3A")
-            icon_url = f"https://api.iconify.design/{icon_id}.svg"
-
-            # Try to inline the SVG (may fail if HA has no internet)
-            icon_svg_data_uri = await _mdi_svg_data_uri(hass, mdi_icon)
-
-        # ---- image: support url/path or media browser (image_media) ----
-
-        img_url = None
-
-        img_sel = call.data.get("image_media")
-        if img_sel and not call.data.get("image"):
-            # 1) Prefer the still thumbnail when HA provides it (image entities)
-            thumb = _selector_thumbnail(img_sel)
-            if thumb:
-                # Signs + absolutizes '/api/image_proxy/...'
-                img_url = await _abs_media_url(hass, thumb)
-            else:
-                # 2) Fallback: resolve media-source id and force still endpoint
-                mid = _media_id_from_selector(img_sel)
-                if mid:
-                    tmp = await _abs_media_url(hass, {"media_id": mid})
-                    img_url = _ensure_still_image_url(tmp)
-
-        if img_url is None:
-            # Legacy field supports object or string
-            img_spec = call.data.get("image")
-            if isinstance(img_spec, dict) and ("media_id" in img_spec or "media_content_id" in img_spec):
-                mid = img_spec.get("media_id") or img_spec.get("media_content_id")
-                if mid:
-                    tmp = await _abs_media_url(hass, {"media_id": mid})
-                    img_url = _ensure_still_image_url(tmp)
-                else:
-                    img_url = await _abs_media_url(hass, img_spec)  # url/path object
-            else:
-                img_url = await _abs_media_url(hass, img_spec)      # plain url or /local/...
-
-        # ---- sound: support url/path/object OR media browser (sound_media) ----
-        sound_url = None
-        snd_sel = call.data.get("sound_media")
-        if snd_sel and not call.data.get("sound"):
-            mid = _media_id_from_selector(snd_sel)                  # <-- new
-            if mid:
-                sound_url = await _abs_media_url(hass, {"media_id": mid})
-
-        if sound_url is None:
-            snd_spec = call.data.get("sound")
-            if isinstance(snd_spec, dict) and ("media_id" in snd_spec or "media_content_id" in snd_spec):
-                mid = snd_spec.get("media_id") or snd_spec.get("media_content_id")
-                if mid:
-                    sound_url = await _abs_media_url(hass, {"media_id": mid})
-                else:
-                    sound_url = await _abs_media_url(hass, snd_spec)
-            else:
-                sound_url = await _abs_media_url(hass, snd_spec)
-
-
-
-        sound_pct = None
-        snd = call.data.get("sound")
-        if isinstance(snd, dict) and "volume_percent" in snd:
-            try:
-                sound_pct = int(snd.get("volume_percent"))
-            except (TypeError, ValueError):
-                sound_pct = None
-        elif "sound_volume_percent" in call.data:
-            try:
-                sound_pct = int(call.data.get("sound_volume_percent"))
-            except (TypeError, ValueError):
-                sound_pct = None
-
-        # custom volume - if provided
-        if sound_pct is not None:
-            if sound_pct < 0: sound_pct = 0
-            if sound_pct > 200: sound_pct = 200
-
-        length_val = call.data.get("length")
-        try:
-            chosen_duration = int(length_val) if length_val is not None and str(length_val).strip() != "" else 6
-        except Exception:
-            chosen_duration = 6
-
-        if chosen_duration < 3:
-            chosen_duration = 3
-        elif chosen_duration > 120:
-            chosen_duration = 120
-
-        payload = {
-            "title":        call.data.get("title"),
-            "message":      call.data["message"],
-            "actions":      call.data.get("actions") or [],
-            "duration":     chosen_duration,
-            "position":     call.data.get("position"),
-            "color":        color_hex,
-            "transparency": call.data.get("transparency"),
-            "interrupt":    bool(call.data.get("interrupt", False)),
-            "image_url":    img_url,
-            "sound_url":    sound_url,
-            "sound_volume_percent": sound_pct,
-            "icon_svg_data_uri": icon_svg_data_uri,       
-            "icon_url":     icon_url,                      # fallback if SVG fetch failed
-        }
-
+        # add integration id if targeting a device
         if entry2:
             payload["id"] = entry2.data.get("id") or entry2.entry_id
 
-        payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
-
-        # Correlation id: keep provided or generate one (to match old behavior)
+        # correlation id (keep provided or generate)
         cid = call.data.get("cid") or secrets.token_urlsafe(8)
-        payload["cid"] = cid  # include in the event payload just like before
+        payload["cid"] = cid
 
-        # Fire as a plain HA event (like quickbars.open)
+        # fire events
         hass.bus.async_fire("quickbars.notify", payload)
-
-        # Let automations latch onto the correlation id if desired
-        hass.bus.async_fire(
-            f"{DOMAIN}.notification_sent",
-            {
-                "device_id": hass.data[DOMAIN][entry.entry_id]["device_id"],
-                "entry_id": entry2.entry_id,
-                "cid": cid,
-                "title": payload.get("title"),
-            },
-        )
+        if entry2:
+            hass.bus.async_fire(
+                f"{DOMAIN}.notification_sent",
+                {
+                    "device_id": hass.data[DOMAIN][entry.entry_id]["device_id"],
+                    "entry_id": entry2.entry_id,
+                    "cid": cid,
+                    "title": payload.get("title"),
+                },
+            )
 
     # Register interactive prompt service
     hass.services.async_register(DOMAIN, "notify", _svc_notify)
@@ -499,101 +370,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: config_entries.ConfigEn
         await presence.stop()
     # no platforms to unload
     return True
-
-
-async def _mdi_svg_data_uri(hass, mdi_icon: str) -> str | None:
-    """Fetch mdi:<name> as SVG and return as a data URI (base64)."""
-    try:
-        icon = (mdi_icon or "").strip()
-        if not icon:
-            return None
-        icon_id = icon.replace(":", "%3A")
-        url = f"https://api.iconify.design/{icon_id}.svg"
-        session = async_get_clientsession(hass)
-        async with session.get(url, timeout=8) as resp:
-            if resp.status != 200:
-                _LOGGER.warning("iconify fetch failed (%s): %s", resp.status, url)
-                return None
-            svg_bytes = await resp.read()
-        b64 = base64.b64encode(svg_bytes).decode()
-        return f"data:image/svg+xml;base64,{b64}"
-    except Exception as e:
-        _LOGGER.warning("iconify fetch error for %s: %s", mdi_icon, e)
-        return None
-    
-async def _abs_media_url(hass, spec) -> str | None:
-    """Return absolute, fetchable URL for strings, {url|path|media_id}, or media-source items."""
-    if not spec:
-        return None
-
-    base = get_url(hass)
-
-    def _abs_path(path: str) -> str:
-        p = _ensure_still_image_url(path)
-        if p.startswith(("http://", "https://")):
-            return p
-        if p.startswith("/api/"):
-            # SIGN (no await here)
-            signed = async_sign_path(hass, p, timedelta(seconds=60))
-            return f"{base}{signed}"
-        if p.startswith("/"):
-            return f"{base}{p}"
-        if p.startswith("local/"):
-            return f"{base}/{p}"
-        # default: give back as-is
-        return p
-
-    # STRING input
-    if isinstance(spec, str):
-        return _abs_path(spec)
-
-    # OBJECT input
-    if isinstance(spec, dict):
-        if spec.get("url"):
-            return spec["url"]
-        if spec.get("path"):
-            # normalize to /local/<path>
-            p = str(spec["path"]).lstrip("/")
-            if not p.startswith("local/"):
-                p = f"local/{p}"
-            return _abs_path(p)
-        mid = spec.get("media_id") or spec.get("media_content_id")
-        if mid:
-            play_item = await media_source.async_resolve_media(hass, str(mid), None)
-            url = async_process_play_media_url(hass, play_item.url)
-            return _abs_path(url)
-
-    return None
-
-
-
-
-def _media_id_from_selector(val: Any) -> str | None:
-    """
-    Accept the media selector's mapping (e.g. {"media_content_id": "media-source://..."}),
-    or a raw string, and return a media-source id string.
-    """
-    if isinstance(val, dict):
-        mid = val.get("media_content_id") or val.get("media_id")
-        return str(mid) if mid else None
-    if isinstance(val, str):
-        return val
-    return None
-
-def _ensure_still_image_url(u):
-    if isinstance(u, str):
-        # turn ..._stream/... into the single-frame endpoint
-        u = u.replace("/api/camera_proxy_stream/", "/api/camera_proxy/")
-        u = u.replace("/api/image_proxy_stream/", "/api/image_proxy/")
-    return u
-
-def _selector_thumbnail(sel) -> str | None:
-    """If a media selector dict includes a thumbnail (e.g., for image entities),
-    return the HA API path like '/api/image_proxy/image.xyz'."""
-    if isinstance(sel, dict):
-        meta = sel.get("metadata")
-        if isinstance(meta, dict):
-            thumb = meta.get("thumbnail")
-            if isinstance(thumb, str) and thumb:
-                return thumb
-    return None

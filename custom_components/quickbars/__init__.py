@@ -11,6 +11,7 @@ import logging
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import zeroconf as ha_zc
+from homeassistant.components import persistent_notification
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
@@ -24,15 +25,9 @@ import secrets
 from quickbars_bridge.events import ws_ping
 from quickbars_bridge.hass_helpers import build_notify_payload
 
-from .constants import DOMAIN  # DOMAIN = "quickbars"
+from .constants import DOMAIN, EVENT_NAME, POS_CHOICES, SERVICE_TYPE
 
 _LOGGER = logging.getLogger(__name__)
-
-EVENT_NAME = "quickbars.open"
-SERVICE_TYPE = "_quickbars._tcp.local."
-
-# camera positions
-POS_CHOICES = ["top_left", "top_right", "bottom_left", "bottom_right"]
 
 # ----- Service Schemas -----
 QUICKBAR_SCHEMA = vol.Schema({
@@ -313,16 +308,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
     hass.data[DOMAIN][entry.entry_id].update(
         presence=presence,
         coordinator=coordinator,
-        unsub_actions=unsub_action,
+        unsub_action=unsub_action,
     )
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: config_entries.ConfigEntry) -> bool:
-    stored = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
-    if (u := stored.get("unsub_actions")):
-        u()
-    if (presence := stored.get("presence")):
+    data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
+    # stop presence
+    presence = data.get("presence")
+    if presence:
         await presence.stop()
-    # no platforms to unload
+    # cancel bus listener
+    unsub = data.get("unsub_action")
+    if callable(unsub):
+        unsub()
+    # no platforms to unload; if you add any, call await hass.config_entries.async_unload_platforms(...)
     return True
+
+async def async_remove_entry(hass: HomeAssistant, entry: config_entries.ConfigEntry) -> None:
+    """Called after an entry is removed (after unload)."""
+    # Gentle reminder for the TV app
+    persistent_notification.async_create(
+        hass,
+        (
+            "The QuickBars integration for a specific TV was removed from Home Assistant.\n\n"
+            "If the QuickBars TV app is still paired, open the app → Settings "
+            "→ Manage HA Integration → Reset Pairing to clean up pairing on the TV."
+        ),
+        title="QuickBars integration removed",
+    )

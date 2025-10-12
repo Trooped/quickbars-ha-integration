@@ -4,3 +4,9 @@ ALLOWED_DOMAINS = [
     "lock", "alarm_control_panel", "camera", "automation", "media_player",
 ]
 DOMAIN = "quickbars"
+
+EVENT_NAME = "quickbars.open"
+SERVICE_TYPE = "_quickbars._tcp.local."
+
+# camera positions
+POS_CHOICES = ["top_left", "top_right", "bottom_left", "bottom_right"]

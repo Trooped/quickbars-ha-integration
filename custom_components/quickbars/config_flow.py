@@ -179,10 +179,19 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"name": title}
 
         # Add confirmation step before starting pairing
+        self.context["title_placeholders"] = {"name": title}
+        self._host, self._port = host, port
         return self.async_show_form(
             step_id="zeroconf_confirm",
-            data_schema=vol.Schema({}),  # no fields; just a Continue button
-            description_placeholders={"hint": f"Prepare TV for pairing with {title}."},
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "id": (props.get("id") or ""),
+                "host": host,
+                "port": str(port),
+                "api": (props.get("api") or ""),
+                "app_version": (props.get("app_version") or ""),
+                "name": title,
+            },
         )
     
     async def async_step_zeroconf_confirm(self, user_input=None) -> FlowResult:

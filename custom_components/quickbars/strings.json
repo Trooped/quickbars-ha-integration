@@ -4,12 +4,25 @@
     "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "Add QuickBars TV",
-        "description": "Enter the TV's IP and port"
+        "title": "Connect to QuickBars",
+        "description": "Enter the TV's IP and port",
+        "data_description": {
+          "host": "Host",
+          "port": "Port"
+        },
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        }
       },
       "pair": {
-        "title": "Pair with TV",
-        "description": "Type the 4-character code shown on your TV"
+        "title": "Enter pairing code",
+        "data_description": {
+          "code": "Code"
+        },
+        "data": {
+          "code": "Code"
+        }
       },
       "zeroconf_confirm": {
         "title": "Pair {name}",
@@ -19,6 +32,10 @@
         "title": "Connect QuickBars to Home Assistant",
         "description": "Enter your Home Assistant URL and a long-lived access token. We'll test the connection before saving.",
         "data": {
+          "url": "Home Assistant URL",
+          "token": "Long-lived token"
+        },
+        "data_description": {
           "url": "Home Assistant URL",
           "token": "Long-lived token"
         }
@@ -37,13 +54,14 @@
     "error": {
       "no_snapshot": "No snapshot available. Pull one first.",
       "no_quickbars": "No QuickBars were found in the snapshot.",
-      "creds_invalid": "Couldn’t connect with the provided URL/token. {hint}",
+      "creds_invalid": "Could not connect with the provided URL/token. {hint}",
       "tv_unreachable": "TV not reachable. Make sure the app is open and the pairing screen is visible.",
       "bad_code": "Invalid code. Try again.",
-      "no_unique_id": "Could not get a stable device ID from the TV. Please try again."
+      "no_unique_id": "Could not get a stable device ID from the TV. Please try again.",
+      "name_taken": "A QuickBar with that name already exists."
     },
     "abort": {
-      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+      "already_configured": "This device is already configured."
     }
   },
   "options": {
@@ -72,6 +90,119 @@
       "ws_error": "Could not communicate with QuickBars on the TV.",
       "invalid_selection": "Please select at least one entity.",
       "no_entities": "No entities available to export."
+    }
+  },
+  "services": {
+    "camera_toggle": {
+      "name": "Show camera (PiP)",
+      "description": "Show a camera overlay on the TV. Provide either a QuickBars camera alias or a Home Assistant camera entity.",
+      "fields": {
+        "device_id": {
+          "name": "Target TV (optional)",
+          "description": "Limit to a specific QuickBars device"
+        },
+        "camera_alias": {
+          "name": "Camera alias (QuickBars)",
+          "description": "Alias as imported into QuickBars."
+        },
+        "camera_entity": {
+          "name": "Camera entity",
+          "description": "Home Assistant camera entity matching a QuickBars camera."
+        },
+        "size": {
+          "name": "Size preset",
+          "description": "Small, medium, or large."
+        },
+        "size_px": {
+          "name": "Custom size (pixels)",
+          "description": "Object with width/height, for example: {\"w\":480,\"h\":270}."
+        },
+        "position": {
+          "name": "Position",
+          "description": "Screen corner for the PiP."
+        },
+        "show_title": {
+          "name": "Show camera title",
+          "description": "Display the camera title overlay (if available)."
+        },
+        "auto_hide": {
+          "name": "Auto-hide (seconds)",
+          "description": "How long to keep the camera visible. 0 = never."
+        }
+      }
+    },
+    "notify": {
+      "name": "Send a Notification to your TV using QuickBars",
+      "description": "Show a rich notification on the TV with optional actions.",
+      "fields": {
+        "device_id": {
+          "name": "Target TV (optional)",
+          "description": "Limit to a specific QuickBars device"
+        },
+        "title": {
+          "name": "Title",
+          "description": "Title of the notification."
+        },
+        "message": { "name": "Message", "description": "Main message text." },
+        "actions": {
+          "name": "Actions",
+          "description": "List of {id, label} objects."
+        },
+        "color": {
+          "name": "Overlay color",
+          "description": "RGB color object."
+        },
+        "transparency": {
+          "name": "Transparency",
+          "description": "0.0 = opaque, 1.0 = fully transparent."
+        },
+        "mdi_icon": {
+          "name": "Icon",
+          "description": "Pick an MDI icon (e.g., mdi:bell)."
+        },
+        "image": {
+          "name": "Image source",
+          "description": "Provide url/path/media_id object."
+        },
+        "image_media": {
+          "name": "Image (Media Browser)",
+          "description": "Pick an image from the Media Browser."
+        },
+        "sound": {
+          "name": "Sound",
+          "description": "Provide url/path/media_id object."
+        },
+        "sound_media": {
+          "name": "Sound (Media Browser)",
+          "description": "Pick an audio file from the Media Browser."
+        },
+        "sound_volume_percent": {
+          "name": "Sound volume (%)",
+          "description": "0–200%. 100% = device volume."
+        },
+        "interrupt": {
+          "name": "Interrupt",
+          "description": "Hide any existing notification and show this immediately."
+        },
+        "position": {
+          "name": "Position",
+          "description": "Screen position of the notification."
+        }
+      }
+    },
+    "quickbar_toggle": {
+      "name": "Toggle QuickBar",
+      "description": "Open/close a QuickBar by alias.",
+      "fields": {
+        "device_id": {
+          "name": "Target TV (optional)",
+          "description": "Limit to a specific QuickBars device"
+        },
+        "alias": {
+          "name": "Alias",
+          "description": "QuickBar alias defined in the Android TV app."
+        }
+      }
     }
   }
 }

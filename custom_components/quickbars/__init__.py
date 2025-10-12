@@ -1,89 +1,82 @@
-"""The QuickBars for Home Assistant Integration"""
+"""The QuickBars for Home Assistant Integration."""
 
 from __future__ import annotations
 
-from datetime import timedelta
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
+import logging
+import secrets
 from typing import Any
 
-import asyncio
-import logging
-
+from quickbars_bridge.hass_helpers import build_notify_payload
 import voluptuous as vol
-from homeassistant import config_entries
-from homeassistant.components import zeroconf as ha_zc
-from homeassistant.components import persistent_notification
-from homeassistant.const import CONF_HOST, CONF_PORT
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from zeroconf import ServiceStateChange
 from zeroconf.asyncio import AsyncServiceBrowser
 
-import secrets
-
-from quickbars_bridge.events import ws_ping
-from quickbars_bridge.hass_helpers import build_notify_payload
+from homeassistant import config_entries
+from homeassistant.components import persistent_notification, zeroconf as ha_zc
+from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers.typing import ConfigType
 
 from .constants import DOMAIN, EVENT_NAME, POS_CHOICES, SERVICE_TYPE
+from .coordinator import QuickBarsCoordinator
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _LOGGER = logging.getLogger(__name__)
 
+# Typed config entry for this integration
+type QuickBarsConfigEntry = config_entries.ConfigEntry["QuickBarsRuntime"]
+
+@dataclass(slots=True)
+class QuickBarsRuntime:
+    """Runtime data for a QuickBars config entry."""
+
+    device_id: str
+    presence: _Presence
+    coordinator: QuickBarsCoordinator
+    unsub_action: Callable[[], None] | None
+
+
 # ----- Service Schemas -----
-QUICKBAR_SCHEMA = vol.Schema({
-    vol.Required("alias"): cv.string,
-    vol.Optional("device_id"): cv.string,      
-})
+QUICKBAR_SCHEMA = vol.Schema(
+    {
+        vol.Required("alias"): cv.string,
+        vol.Optional("device_id"): cv.string,
+    }
+)
 
-CAMERA_SCHEMA = vol.Schema({
-    # Exactly one of these:
-    vol.Exclusive("camera_alias",  "cam_id"): cv.string,
-    vol.Exclusive("camera_entity", "cam_id"): cv.entity_id,
-
-    # Optional rendering options
-    vol.Optional("position"): vol.In(POS_CHOICES),
-
-    # Either preset size OR custom size in px
-    vol.Exclusive("size", "cam_size"): vol.In(["small", "medium", "large"]),
-    vol.Exclusive("size_px", "cam_size"): vol.Schema({
-        vol.Required("w"): vol.All(vol.Coerce(int), vol.Range(min=48, max=3840)),
-        vol.Required("h"): vol.All(vol.Coerce(int), vol.Range(min=48, max=2160)),
-    }),
-
-    # Auto-hide in seconds: 0 = never, 15..300 otherwise
-    vol.Optional("auto_hide", default=30): vol.All(vol.Coerce(int), vol.Range(min=0, max=300)),
-
-    # Show title overlay?
-    vol.Optional("show_title", default=True): cv.boolean,
-
-    vol.Optional("device_id"): cv.string, 
-})
-
-
-# ============ Connectivity (Coordinator) ============
-class QuickBarsCoordinator(DataUpdateCoordinator[bool]):
-    """Polls /api/ping periodically to determine connectivity."""
-
-    def __init__(self, hass: HomeAssistant, entry: config_entries.ConfigEntry) -> None:
-        self.entry = entry
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=f"quickbars_{entry.entry_id}_conn",
-            update_interval=timedelta(seconds=10),
-        )
-
-    async def _async_update_data(self) -> bool:
-        """Single-shot WS connectivity check (no HTTP)."""
-        try:
-            ok = await ws_ping(self.hass, self.entry, timeout=5.0)
-            if not ok:
-                raise UpdateFailed()
-            return True
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            raise UpdateFailed(f"WS ping error: {e}") from e
+CAMERA_SCHEMA = vol.Schema(
+    {
+        # Exactly one of these:
+        vol.Exclusive("camera_alias", "cam_id"): cv.string,
+        vol.Exclusive("camera_entity", "cam_id"): cv.entity_id,
+        # Optional rendering options
+        vol.Optional("position"): vol.In(POS_CHOICES),
+        # Either preset size OR custom size in px
+        vol.Exclusive("size", "cam_size"): vol.In(["small", "medium", "large"]),
+        vol.Exclusive("size_px", "cam_size"): vol.Schema(
+            {
+                vol.Required("w"): vol.All(
+                    vol.Coerce(int), vol.Range(min=48, max=3840)
+                ),
+                vol.Required("h"): vol.All(
+                    vol.Coerce(int), vol.Range(min=48, max=2160)
+                ),
+            }
+        ),
+        # Auto-hide in seconds: 0 = never, 15..300 otherwise
+        vol.Optional("auto_hide", default=30): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=300)
+        ),
+        # Show title overlay?
+        vol.Optional("show_title", default=True): cv.boolean,
+        vol.Optional("device_id"): cv.string,
+    }
+)
 
 
 class _Presence:
@@ -113,9 +106,13 @@ class _Presence:
             state_change = kwargs.get("state_change")
         else:
             _, service_type, name, state_change = args
-        self.hass.async_create_task(self._handle_change(service_type, name, state_change))
+        self.hass.async_create_task(
+            self._handle_change(service_type, name, state_change)
+        )
 
-    async def _handle_change(self, service_type: str, name: str, state_change: ServiceStateChange) -> None:
+    async def _handle_change(
+        self, service_type: str, name: str, state_change: ServiceStateChange
+    ) -> None:
         if service_type != SERVICE_TYPE:
             return
 
@@ -140,135 +137,146 @@ class _Presence:
 
         host = (info.parsed_addresses() or [self.entry.data.get(CONF_HOST)])[0]
         port = info.port or self.entry.data.get(CONF_PORT)
-        if host and port and (
-            host != self.entry.data.get(CONF_HOST)
-            or port != self.entry.data.get(CONF_PORT)
+        if (
+            host
+            and port
+            and (
+                host != self.entry.data.get(CONF_HOST)
+                or port != self.entry.data.get(CONF_PORT)
+            )
         ):
             new_data = {**self.entry.data, CONF_HOST: host, CONF_PORT: port}
             _LOGGER.debug("Presence: updating host/port -> %s:%s", host, port)
             self.hass.config_entries.async_update_entry(self.entry, data=new_data)
 
-            coordinator = self.hass.data[DOMAIN][self.entry.entry_id].get("coordinator")
-            if coordinator:
-                self.hass.async_create_task(coordinator.async_request_refresh())
+            rt = getattr(self.entry, "runtime_data", None)
+            if rt is not None:
+                self.hass.async_create_task(rt.coordinator.async_request_refresh())
 
 
-async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
+def _entry_for_device(
+    hass: HomeAssistant, device_id: str | None
+) -> config_entries.ConfigEntry | None:
+    """Resolve config entry from a HA device_id; fallback if only one entry exists."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if device_id:
+        dev = dr.async_get(hass).async_get(device_id)
+        if dev:
+            ident = next((v for (d, v) in dev.identifiers if d == DOMAIN), None)
+            if ident:
+                for ent in entries:
+                    if ent.data.get("id") == ident or ent.entry_id == ident:
+                        return ent
+    if len(entries) == 1:
+        return entries[0]
+    return None  # ambiguous or none configured
+
+
+async def _handle_quickbar(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Service handler for quickbar_toggle."""
+    data: dict[str, Any] = {"alias": call.data["alias"]}
+    target_device_id = call.data.get("device_id")
+    if target_device_id:
+        ent = _entry_for_device(hass, target_device_id)
+        if ent:
+            data["id"] = ent.data.get("id") or ent.entry_id
+    hass.bus.async_fire(EVENT_NAME, data)
+
+
+async def _handle_camera(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Service handler for camera_toggle."""
+    data: dict[str, Any] = {}
+
+    # optional device targeting
+    target_device_id = call.data.get("device_id")
+    if target_device_id:
+        ent = _entry_for_device(hass, target_device_id)
+        if ent:
+            data["id"] = ent.data.get("id") or ent.entry_id
+
+    # id/alias
+    alias = call.data.get("camera_alias")
+    entity = call.data.get("camera_entity")
+    if alias:
+        data["camera_alias"] = alias
+    if entity:
+        data["camera_entity"] = entity
+
+    # options
+    pos = call.data.get("position")
+    if pos in POS_CHOICES:
+        data["position"] = pos
+
+    if "size" in call.data:
+        data["size"] = call.data["size"]  # small|medium|large
+    elif "size_px" in call.data:
+        sp = call.data["size_px"] or {}
+        try:
+            w = int(sp.get("w"))
+            h = int(sp.get("h"))
+            if w > 0 and h > 0:
+                data["size_px"] = {"w": w, "h": h}
+        except (TypeError, ValueError):
+            # ignore invalid size objects
+            pass
+
+    auto_hide = call.data.get("auto_hide")
+    if isinstance(auto_hide, int):
+        if auto_hide != 0 and auto_hide < 5:
+            auto_hide = 5
+        data["auto_hide"] = auto_hide
+
+    show_title = call.data.get("show_title")
+    if isinstance(show_title, bool):
+        data["show_title"] = show_title
+
+    hass.bus.async_fire(EVENT_NAME, data)
+
+
+async def _svc_notify(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Service handler for notify."""
+    target_device_id = call.data.get("device_id")
+    entry2 = _entry_for_device(hass, target_device_id) if target_device_id else None
+
+    payload = await build_notify_payload(hass, call.data)
+    if entry2:
+        payload["id"] = entry2.data.get("id") or entry2.entry_id
+
+    cid = call.data.get("cid") or secrets.token_urlsafe(8)
+    payload["cid"] = cid
+
+    hass.bus.async_fire("quickbars.notify", payload)
+
+    if entry2:
+        dev_id = entry2.runtime_data.device_id
+        hass.bus.async_fire(
+            f"{DOMAIN}.notification_sent",
+            {
+                **({"device_id": dev_id} if dev_id else {}),
+                "entry_id": entry2.entry_id,
+                "cid": cid,
+                "title": payload.get("title"),
+            },
+        )
+
+
+async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
     """Register global service actions so they exist even without entries."""
-
-    def _entry_for_device(device_id: str | None):
-        """Resolve our config entry from a HA device_id; fallback if only one entry exists."""
-        entries = hass.config_entries.async_entries(DOMAIN)
-        if device_id:
-            dev = dr.async_get(hass).async_get(device_id)
-            if dev:
-                ident = next((v for (d, v) in dev.identifiers if d == DOMAIN), None)
-                if ident:
-                    for ent in entries:
-                        if ent.data.get("id") == ident or ent.entry_id == ident:
-                            return ent
-        if len(entries) == 1:
-            return entries[0]
-        return None  # ambiguous or none configured
-
-    async def handle_quickbar(call: ServiceCall) -> None:
-        data: dict[str, Any] = {"alias": call.data["alias"]}
-        target_device_id = call.data.get("device_id")
-        if target_device_id:
-            ent = _entry_for_device(target_device_id)
-            if ent:
-                data["id"] = ent.data.get("id") or ent.entry_id
-        hass.bus.async_fire(EVENT_NAME, data)
-
-    hass.services.async_register(DOMAIN, "quickbar_toggle", handle_quickbar, QUICKBAR_SCHEMA)
-
-    async def handle_camera(call: ServiceCall) -> None:
-        data: dict[str, Any] = {}
-        # optional device targeting
-        target_device_id = call.data.get("device_id")
-        if target_device_id:
-            ent = _entry_for_device(target_device_id)
-            if ent:
-                data["id"] = ent.data.get("id") or ent.entry_id
-
-        # id/alias
-        alias = call.data.get("camera_alias")
-        entity = call.data.get("camera_entity")
-        if alias:
-            data["camera_alias"] = alias
-        if entity:
-            data["camera_entity"] = entity
-
-        # options
-        pos = call.data.get("position")
-        if pos in POS_CHOICES:
-            data["position"] = pos
-        if "size" in call.data:
-            data["size"] = call.data["size"]  # small|medium|large
-        elif "size_px" in call.data:
-            sp = call.data["size_px"] or {}
-            try:
-                w = int(sp.get("w")); h = int(sp.get("h"))
-                if w > 0 and h > 0:
-                    data["size_px"] = {"w": w, "h": h}
-            except Exception:
-                pass
-        auto_hide = call.data.get("auto_hide")
-        if isinstance(auto_hide, int):
-            if auto_hide != 0 and auto_hide < 5:
-                auto_hide = 5
-            data["auto_hide"] = auto_hide
-        show_title = call.data.get("show_title")
-        if isinstance(show_title, bool):
-            data["show_title"] = show_title
-
-        hass.bus.async_fire(EVENT_NAME, data)
-
-    hass.services.async_register(DOMAIN, "camera_toggle", handle_camera, CAMERA_SCHEMA)
-
-    async def _svc_notify(call: ServiceCall) -> None:
-        # Resolve entry for optional device scoping
-        target_device_id = call.data.get("device_id")
-        entry2 = _entry_for_device(target_device_id) if target_device_id else None
-
-        # Build payload via your helper (unchanged behavior)
-        payload = await build_notify_payload(hass, call.data)
-
-        # Add integration id if we targeted a device
-        if entry2:
-            payload["id"] = entry2.data.get("id") or entry2.entry_id
-
-        # Correlation id (use provided or generate)
-        cid = call.data.get("cid") or secrets.token_urlsafe(8)
-        payload["cid"] = cid
-
-        # Fire events
-        hass.bus.async_fire("quickbars.notify", payload)
-
-        # Optional: emit a metadata event if we have device metadata available
-        if entry2:
-            dev_meta = hass.data.get(DOMAIN, {}).get(entry2.entry_id, {})
-            dev_id = dev_meta.get("device_id")
-            hass.bus.async_fire(
-                f"{DOMAIN}.notification_sent",
-                {
-                    **({"device_id": dev_id} if dev_id else {}),
-                    "entry_id": entry2.entry_id,
-                    "cid": cid,
-                    "title": payload.get("title"),
-                },
-            )
-
+    hass.services.async_register(
+        DOMAIN, "quickbar_toggle", partial(_handle_quickbar, hass), QUICKBAR_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "camera_toggle", partial(_handle_camera, hass), CAMERA_SCHEMA
+    )
     # Note: no voluptuous schema for notify (by design)
-    hass.services.async_register(DOMAIN, "notify", _svc_notify)
-
+    hass.services.async_register(DOMAIN, "notify", partial(_svc_notify, hass))
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> bool:
     """Per-entry setup: presence tracking, coordinator, device registration, and action -> HA event bridge."""
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"snapshot": None}
-
     # Create a Device for device_id targeting
     dev_reg = dr.async_get(hass)
     device = dev_reg.async_get_or_create(
@@ -277,7 +285,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
         manufacturer="QuickBars",
         name=entry.title or "QuickBars TV",
     )
-    hass.data[DOMAIN][entry.entry_id]["device_id"] = device.id
 
     # Presence (Zeroconf) and connectivity
     presence = _Presence(hass, entry)
@@ -295,7 +302,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
         hass.bus.async_fire(
             f"{DOMAIN}.notification_action",
             {
-                "device_id": hass.data[DOMAIN][entry.entry_id]["device_id"],
+                "device_id": entry.runtime_data.device_id,
                 "entry_id": entry.entry_id,
                 "cid": data.get("cid"),
                 "action_id": data.get("action_id"),
@@ -305,7 +312,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
 
     unsub_action = hass.bus.async_listen("quickbars.action", _on_action)
 
-    hass.data[DOMAIN][entry.entry_id].update(
+    entry.runtime_data = QuickBarsRuntime(
+        device_id=device.id,
         presence=presence,
         coordinator=coordinator,
         unsub_action=unsub_action,
@@ -313,20 +321,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: config_entries.ConfigEnt
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: config_entries.ConfigEntry) -> bool:
-    data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
-    # stop presence
-    presence = data.get("presence")
-    if presence:
-        await presence.stop()
-    # cancel bus listener
-    unsub = data.get("unsub_action")
-    if callable(unsub):
-        unsub()
-    # no platforms to unload; if you add any, call await hass.config_entries.async_unload_platforms(...)
+async def async_unload_entry(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> bool:
+    """Unload a QuickBars config entry and clean up resources."""
+    rt = getattr(entry, "runtime_data", None)
+    if rt:
+        if rt.presence:
+            await rt.presence.stop()
+        if rt.unsub_action:
+            rt.unsub_action()
     return True
 
-async def async_remove_entry(hass: HomeAssistant, entry: config_entries.ConfigEntry) -> None:
+
+async def async_remove_entry(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> None:
     """Called after an entry is removed (after unload)."""
     # Gentle reminder for the TV app
     persistent_notification.async_create(

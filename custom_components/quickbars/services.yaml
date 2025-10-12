@@ -1,287 +1,140 @@
-quickbar_toggle:
-  name: Toggle QuickBar
-  description: Open/close a QuickBar by alias (acts as a toggle on the Android app).
-  fields:
-    device_id:
-      name: Target QuickBars device
-      required: false
-      description: >
-        Select a specific QuickBars device. If omitted, the command is sent
-        to all connected QuickBars devices (default).
-      selector:
-        device:
-          integration: quickbars
-    alias:
-      name: Alias
-      description: QuickBar alias defined in the Android TV app.
-      example: living_room
-      required: true
-      selector:
-        text:
-
 camera_toggle:
-  name: Show camera (PiP)
-  description: |
-    Show a camera overlay on the TV.
-    The camera MUST be imported into QuickBars and have an **MJPEG** stream URL.
-    Provide either an alias (as known to QuickBars) or select a Home Assistant camera entity.
-
+  # Show a camera PiP on the TV
   fields:
     device_id:
-      name: Target QuickBars device
       required: false
-      description: >
-        Select a specific QuickBars device. If omitted, the camera PiP is sent
-        to all connected QuickBars devices (default).
       selector:
         device:
           integration: quickbars
-
     camera_alias:
-      name: Camera alias (QuickBars)
-      description: |
-        The alias as imported into QuickBars.
-        Use this if you know the QuickBars camera alias.
-        You can also use **camera_entity** instead (no need to set both).
-      required: false
       selector:
         text:
-      example: front_door
-
-    camera_entity:
-      name: Camera entity
-      description: |
-        Select a Home Assistant camera entity that corresponds to an imported QuickBars camera.
-        The camera must expose an **MJPEG** URL in the TV app configuration.
       required: false
+      example: front_door
+    camera_entity:
       selector:
         entity:
           domain: camera
-
-    position:
-      name: Position
       required: false
-      default: top_right
-      selector:
-        select:
-          options:
-            - top_left
-            - top_right
-            - bottom_left
-            - bottom_right
-
     size:
-      name: Size preset
-      description: Small/Medium/Large preset. If you want a custom pixel size, leave this empty and use **size_px**.
-      required: false
       selector:
         select:
-          options:
-            - small
-            - medium
-            - large
-
-    size_px:
-      name: Custom size (pixels)
-      description: 'W×H object, e.g. {"w":480,"h":270}. Leave empty if you use **size**.'
+          options: [small, medium, large]
       required: false
+    size_px:
       selector:
         object:
-      example: '{"w": 640, "h": 360}'
-
-    auto_hide:
-      name: Auto-hide (seconds)
-      description: |
-        How long to keep the camera visible.
-        Use **0** for never (must be dismissed manually).
-        Valid range: 0 (never), then 5–300.
       required: false
-      default: 5
+      example: { "w": 480, "h": 270 }
+    position:
+      selector:
+        select:
+          options: [top_left, top_right, bottom_left, bottom_right]
+      required: false
+    show_title:
+      selector:
+        boolean:
+      required: false
+      default: true
+    auto_hide:
       selector:
         number:
           min: 0
           max: 300
-          step: 5
-          unit_of_measurement: s
           mode: slider
-
-    show_title:
-      name: Show camera title
-      description: Show the camera title overlay (if available).
       required: false
-      default: true
-      selector:
-        boolean:
-
+      default: 10
 
 notify:
-  name: Send a Notification using QuickBars
-  description: Show a rich notification on the TV with optional actions.
+  # Show a rich notification
   fields:
     device_id:
-      name: Target QuickBars device
       required: false
-      description: >
-        Select a specific QuickBars device. If omitted, the notification is sent
-        to all connected QuickBars devices (default).
       selector:
         device:
           integration: quickbars
-
     title:
-      name: Title
-      description: Title of the notification.
-      required: false
       selector:
         text:
-
-    mdi_icon:
-      name: Icon
-      description: Pick an MDI icon (e.g., mdi:bell). The integration will embed the SVG and show it near the title.
       required: false
-      selector:
-        icon:
-          placeholder: mdi:bell
-
     message:
-      name: Message
-      description: Main message text.
-      required: true
       selector:
         text:
-      example: 'Door opened at {{ now().strftime("%H:%M:%S") }}'
-
+          multiline: true
+      required: true
     actions:
-      name: Actions
-      description: List of {id, label} objects.
-      required: false
-      example:
-        - id: "open_door"
-          label: "Open"
-        - id: "dismiss"
-          label: "Dismiss"
       selector:
         object:
-
-    position:
-      name: Position
-      required: true
-      default: bottom_left
-      selector:
-        select:
-          options:
-            - label: Top left
-              value: top_left
-            - label: Top right
-              value: top_right
-            - label: Bottom left
-              value: bottom_left
-            - label: Bottom right
-              value: bottom_right
-
-    length:
-      name: Length
-      description: How long to show the notification (seconds).
       required: false
-      default: 6
-      selector:
-        number:
-          min: 3
-          max: 120
-          step: 1
-          mode: slider
-          unit_of_measurement: s
-
+      example: [{ "id": "open", "label": "Open" }]
     color:
-      name: Overlay color
-      description: RGB color; transparency is set separately.
-      required: false
-      default: "#8cd0e6"
       selector:
-        color_rgb:
-
-    transparency:
-      name: Transparency
-      description: 0.0 = opaque, 1.0 = fully transparent
+        object:
       required: false
-      default: 0.0
+      example: { "r": 255, "g": 165, "b": 0 }
+    transparency:
       selector:
         number:
           min: 0
           max: 1
           step: 0.05
-          mode: slider
-
-    interrupt:
-      name: Interrupt
-      description: Hide any existing notification, and show this one immediately.
       required: false
-      default: false
+      default: 0.0
+    mdi_icon:
       selector:
-        boolean:
-
-    image:
-      name: Image source
-      description: |
-        Provide ONE of:
-          - url: "https://example.com/pic.jpg"
-          - path: "folder/file.jpg"      (relative to /config/www → served at /local/folder/file.jpg)
-          - media_id: "media-source://media_source/local/folder/file.jpg"  (from My media)
+        text:
       required: false
+      example: mdi:bell
+    image:
       selector:
         object:
-      example: >
-        {"url": "https://example.com/pic.jpg"} or
-        {"path": "images/quickbars-hero.png"} or
-        {"media_id": "media-source://media_source/local/images/quickbars-hero.png"}
-
-    image_media:
-      name: Image (Media Browser)
-      description: Select an image from Home Assistant's Media Browser (My media).
-          This is a shortcut for the **image** field above. Use only one.
       required: false
+      example: { "url": "https://example.com/pic.jpg" }
+    image_media:
       selector:
         media:
           accept:
             - image/*
-
-    sound:
-      name: Sound
-      description: |
-        Provide ONE of:
-          - url: "https://example.com/file.mp3"
-          - path: "chimes/ding.mp3"      (relative to /config/www → /local/chimes/ding.mp3)
-          - media_id: "media-source://media_source/local/chimes/ding.mp3"  (from My media)
       required: false
+    sound:
       selector:
         object:
-      example: >
-        {"url": "https://example.com/file.mp3"} or
-        {"path": "chimes/ding.mp3"} or
-        {"media_id": "media-source://media_source/local/chimes/ding.mp3"}
-
-  
-
-    sound_media:
-      name: Sound (Media Browser)
-      description: Select an audio file from Home Assistant's Media Browser (My media).
-          This is a shortcut for the **sound** field above. Use only one.
       required: false
+      example: { "url": "https://example.com/file.mp3" }
+    sound_media:
       selector:
         media:
           accept:
             - audio/*
-
-    sound_volume_percent:
-      name: Sound volume (%)
-      description: >
-        0–200%. 100% = system volume; >100% uses post-mix boost (may clip/distort).
       required: false
-      default: 100
+    sound_volume_percent:
       selector:
         number:
           min: 0
           max: 200
-          step: 5
-          unit_of_measurement: "%"
-          mode: slider
+      required: false
+      default: 100
+    interrupt:
+      selector:
+        boolean:
+      required: false
+      default: false
+    position:
+      selector:
+        select:
+          options: [top_left, top_right, bottom_left, bottom_right]
+      required: false
+
+quickbar_toggle:
+  # Toggle a QuickBar by alias
+  fields:
+    device_id:
+      required: false
+      selector:
+        device:
+          integration: quickbars
+    alias:
+      selector:
+        text:
+      required: true
+      example: living_room

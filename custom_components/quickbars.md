@@ -48,7 +48,7 @@ Go to {% my integrations title="**Settings** > **Devices & services**" %}, selec
 
 ## Configuration options
 
-After adding QuickBars, you can change options later:
+To configure the QuickBars for Home Assistant TV app from the integration:
 
 - Go to {% my integrations title="**Settings** > **Devices & services**" %}.
 - Select **QuickBars** > **Configure** {% icon "mdi:cog-outline" %}.
@@ -68,13 +68,15 @@ Manage QuickBars:
 
 This integration exposes **service actions** (no entities). You can call them from automations and scripts.
 
-### Service: `quickbars.quickbar_toggle` {% icon "mdi:television-guide" %}
+## Actions
+
+### Action: `quickbars.quickbar_toggle` {% icon "mdi:television-guide" %}
 
 Open or close a QuickBar overlay by its alias.
 
 - **Fields**
   - `device_id` *(optional)* — Target a specific QuickBars device. If omitted, broadcasts to all connected QuickBars devices.
-  - `alias` *(required)* — The QuickBar alias defined in the TV app (for example, `living_room`).
+  - `alias` *(required)* — The QuickBar alias defined in the TV app.
 
 **Example**
 
@@ -88,20 +90,23 @@ action:
       device_id: 1234567890abcdef
 ```
 
-### Service: `quickbars.camera_toggle` {% icon "mdi:video-wireless" %}
+### Action: `quickbars.camera_toggle` {% icon "mdi:video-wireless" %}
 
-Show a camera as a picture-in-picture overlay on the TV. 
+Show a camera overlay on the TV.
+The camera MUST be imported into QuickBars and have an **MJPEG** stream URL.
+Provide either an alias (as known to QuickBars) or select a Home Assistant camera entity.
+
 
 - **Fields**
 
   - `device_id` *(optional)* - Target a specific QuickBars device. If omitted, broadcasts to all connected QuickBars devices.
-  - `camera_alias` *(optional) - Camera Alias as configured in QuickBars TV app (in the Manage Save Entities screen). You must use this or camera_entity.
-  - `camera_entity` *(optional) - Home Assistant camera that maps to a camera imported to QuickBars. You must use this or camera_alias.
-  - `position` *(optional) - top_left, top_right, bottom_left, bottom_right. If not specified, uses the position configured to the camera entity on the TV app.
-  - `size` *(optional) - small, medium, large. If not specified, uses the size configured to the camera entity on the TV app. You can use this or size_px.
-  - `size_px` *(optional) - Custom size, for example {"w": 640,"h": 360}. Use instead of size.
-  - `auto_hide` *(optional) - Seconds before auto-hide; 0 = never. If not specified, uses the auto_hide configured to the camera entity on the TV app.
-  - `show_title` *(optional) - Determines if you see the camera's name on the stream. If not specified, uses the show_title configured to the camera entity on the TV app.
+  - `camera_alias` *(optional)* - Camera Alias as configured in QuickBars TV app (in the Manage Saved Entities screen). You must use this or camera_entity.
+  - `camera_entity` *(optional)* - Home Assistant camera that maps to a camera imported to QuickBars. You must use this or camera_alias.
+  - `size` *(optional)* - small, medium, large. If not specified, uses the size configured to the camera entity on the TV app. You can use this or size_px.
+  - `size_px` *(optional)* - Custom size, for example {"w":640,"h":360}. Use instead of size.
+  - `position` *(optional)* - top_left, top_right, bottom_left, bottom_right. If not specified, uses the position configured to the camera entity on the TV app.
+  - `show_title` *(optional)* - Show the camera's name on the stream. If not specified, uses the show_title configured to the camera entity on the TV app.
+  - `auto_hide` *(optional)* - Seconds before auto-hide; 0 = never (need to toggle manually). If not specified, uses the auto_hide configured to the camera entity on the TV app.
 
 **Example**
 
@@ -117,8 +122,8 @@ action:
       device_id: 1234567890abcdef
 ```
 
-### Service: `quickbars.notify` {% icon "mdi:message-arrow-right" %}
-Display a rich TV notification with optional icon, image, sound, and action buttons.
+### Action: `quickbars.notify` {% icon "mdi:message-arrow-right" %}
+Display a rich TV notification with optional icon, image, sound, action buttons and more.
 
 - **Fields**
 
@@ -126,26 +131,26 @@ Display a rich TV notification with optional icon, image, sound, and action butt
   - `title` *(optional)* - Add a title on top of the notification.
   - `message` *(required)* - The main message of the notification.
   - `actions` *(optional)* - List of {id, label} for action buttons. You can create automations based on the id.
-  - `actions` *(optional)* - List of {id, label} for action buttons. You can create automations based on the id.
-  - `color` *(optional, default #8cd0e6)* - The background color of the notification.
+  - `length` *(optional, default 6s)* - How long to show the notification (seconds).
+  - `color` *(optional, default #8cd0e6)* - The background color of the notification in RGB format.
   - `transparency` *(optional, default 0)* - The transparency of the background. 0 for opaque, 100 for fully transparent.
   - `actions` *(optional)* - List of {id, label} for action buttons. You can create automations based on the id.
-  - `mdi_icon` *(optional)* - Add an icon in the title row. For example, mdi:bell.
-  - `image` *(optional, choose one)* - {"url": "https://..."} | {"path": "images/file.jpg"} (under /config/www → /local/...) | {"media_id": "media-source://..."}. 
-  - `image_media` *(optional, choose one)* -
-
-
-
-position (required) — top_left, top_right, bottom_left, bottom_right.
-
-length (optional, default 6) — Seconds to display.
-
-
-Image (optional; choose one) — {"url": "https://..."} | {"path": "images/file.jpg"} (under /config/www → /local/...) | {"media_id": "media-source://..."}
-
-Sound (optional; choose one) — {"url": "https://..."} | {"path": "chimes/ding.mp3"} | {"media_id": "media-source://..."}
-
-sound_volume_percent (optional, default 100) — 0–200% (values >100% apply post-mix boost)
+  - `mdi_icon` *(optional)* - Pick an MDI icon (e.g., mdi:bell). The integration will embed the SVG and show it near the title.
+  - `image` *(optional, choose one)* - |
+         Provide ONE of these examples:
+          - url: "https://example.com/pic.jpg"
+          - path: "folder/file.jpg"      (relative to /config/www → served at /local/folder/file.jpg)
+          - media_id: "media-source://media_source/local/folder/file.jpg"  (from My media)
+  - `image_media` *(optional)* - Select an image directly from Home Assistant's Media Browser (My media). This is a shortcut for the **image** field above. Use only one of the approaches.
+  - `sound` *(optional, choose one)* - |
+  Provide ONE of thes examples:
+          - url: "https://example.com/file.mp3"
+          - path: "chimes/ding.mp3"      (relative to /config/www → /local/chimes/ding.mp3)
+          - media_id: "media-source://media_source/local/chimes/ding.mp3"  (from My media)
+  - `sound_media` *(optional)* - Select an audio file directly from Home Assistant's Media Browser (My media). This is a shortcut for the **sound** field above. Use only one of the approaches.
+  - `sound_volume_percent` *(optional, default 100%)* -         0–200%. 100% = system volume; >100% uses post-mix boost (may clip/distort).
+  - `interrupt` *(optional)* - Hide any existing notification, and show this one immediately.
+  - `position` *(optional, default top_right)* - top_left, top_right, bottom_left, bottom_right.
 
 **Example**
 
@@ -173,17 +178,13 @@ action:
       device_id: 1234567890abcdef
 ```
 
-{% important %}
-Prefer service action targets (target.device_id, target.entity_id, or target.area_id) over putting identifiers inside data. This is the modern pattern and keeps automations consistent.
-{% endimportant %}
-
-Events
-When a viewer selects an action button on a TV notification, QuickBars sends that action back to Home Assistant as an event.
-Use the Events trigger in an automation and listen for the QuickBars action event name used by the integration. Filter on device_id if you target a single TV.
+## Events
+When a user selects an action button on a TV notification, QuickBars sends that action back to Home Assistant as an event.
+Use the Events trigger in an automation and listen for the QuickBars action event name used by the integration.
 
 {% details "Example: react to a TV action selection" %}
 
-yaml
+```yaml
 Copy code
 # Good
 triggers:
@@ -197,10 +198,12 @@ actions:
     target:
       entity_id: light.entryway
 {% enddetails %}
+```
 
-Examples
+## Examples
 Doorbell: pop-up camera and actionable notification
-yaml
+
+```yaml
 Copy code
 # Good
 alias: "Doorbell on TV"
@@ -229,48 +232,50 @@ actions:
         - id: ignore
           label: "Ignore"
       position: bottom_left
-Data updates
+```
+
+## Data updates
 QuickBars uses local push interactions (no polling) and on-demand requests during the Options flow (for example, exporting saved entities, updating QuickBars configuration on the TV).
 
-Known limitations
-The camera overlay requires an MJPEG stream configured in the QuickBars TV app.
+## Known limitations
+The app must be open (foreground) when configuring the app using the Options Menu.
 
 The integration does not create entities; it exposes service actions and emits/handles events.
 
-Advanced UI features (for example, some positions or grid layout) may require QuickBars Plus in the TV app.
+Advanced UI features (more than 1 QuickBar, advance layouts such as grid option) require QuickBars Plus in the TV app.
 
-Troubleshooting
+## Troubleshooting
 Can’t set up the device (“TV not reachable”)
-Symptom
-The setup form shows “TV not reachable”.
 
-Resolution
+#### Symptom: The setup form shows “TV not reachable”.
 
-Ensure the TV is powered on and the QuickBars TV app is open.
+#### Resolution
 
-Confirm the TV and Home Assistant are on the same network.
+1. Ensure the TV is powered on and the QuickBars TV app is open (foreground).
+2. Try exiting the app and re-opening it.
+3. Confirm the TV and Home Assistant are on the same network.
 
+
+"""""""""
 For discovery, make sure Zeroconf/mDNS works on your LAN.
 
 If using a Home Assistant URL/token:
 
-Use an IP or hostname reachable from the TV (avoid localhost).
-
 Verify the long-lived access token is valid.
+"""""""""""""
 
-Camera overlay doesn’t appear
-Verify the camera has an MJPEG stream and is imported into the QuickBars TV app.
+### Camera/Notification don't appear on the TV after sending them
 
-If selecting by camera_entity, ensure it maps to a camera known to QuickBars.
+#### Symptom: Events are sent using the integration, but don't appear on the TV.
 
-Actions aren’t received in my automation
-Verify the event type and (optionally) device_id in your trigger match the integration’s event payload.
+#### Resolution
 
-Confirm the QuickBars TV app still has network access to Home Assistant.
+1. Make sure "persistent background connection" is enabled on your QuickBars TV app in the settings.
+2. for Cameras - verify the camera has an MJPEG stream, and it's imported to the TV app. 
 
-Removing the integration
-This integration follows standard removal.
+## Removing the integration
+This integration follows standard integration removal.
 
 {% include integrations/remove_device_service.md %}
 
-After deleting the integration in Home Assistant, open the QuickBars TV app and remove the Home Assistant connection there as well.
+After deleting the integration in Home Assistant, open the QuickBars TV app and clear the Home Assistant integration pairing in the app's settings as well. It's required if you want to re-pair to HA again.

@@ -180,6 +180,10 @@
           "name": "Sound volume (%)",
           "description": "0–200%. 100% = device volume."
         },
+        "length": {
+          "name": "Length (seconds)",
+          "description": "How long to show the notification."
+        },
         "interrupt": {
           "name": "Interrupt",
           "description": "Hide any existing notification and show this immediately."

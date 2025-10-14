@@ -93,118 +93,127 @@
     }
   },
   "services": {
-    "camera_toggle": {
-      "name": "Show camera (PiP)",
-      "description": "Show a camera overlay on the TV. Provide either a QuickBars camera alias or a Home Assistant camera entity.",
+    "quickbar_toggle": {
+      "name": "Toggle QuickBar",
+      "description": "Open or close a QuickBar overlay by alias.",
       "fields": {
         "device_id": {
           "name": "Target TV (optional)",
-          "description": "Limit to a specific QuickBars device"
+          "description": "Target a specific QuickBars device. If omitted, broadcasts to all connected QuickBars devices."
         },
-        "camera_alias": {
-          "name": "Camera alias (QuickBars)",
-          "description": "Alias as imported into QuickBars."
-        },
-        "camera_entity": {
-          "name": "Camera entity",
-          "description": "Home Assistant camera entity matching a QuickBars camera."
-        },
-        "size": {
-          "name": "Size preset",
-          "description": "Small, medium, or large."
-        },
-        "size_px": {
-          "name": "Custom size (pixels)",
-          "description": "Object with width/height, for example: {\"w\":480,\"h\":270}."
-        },
-        "position": {
-          "name": "Position",
-          "description": "Screen corner for the PiP."
-        },
-        "show_title": {
-          "name": "Show camera title",
-          "description": "Display the camera title overlay (if available)."
-        },
-        "auto_hide": {
-          "name": "Auto-hide (seconds)",
-          "description": "How long to keep the camera visible. 0 = never."
+        "alias": {
+          "name": "Alias",
+          "description": "The QuickBar alias defined in the TV app."
         }
       }
     },
-    "notify": {
-      "name": "Send a Notification to your TV using QuickBars",
-      "description": "Show a rich notification on the TV with optional actions.",
+
+    "camera_toggle": {
+      "name": "Show camera (PiP)",
+      "description": "Show or hide a picture-in-picture camera overlay on the TV. Provide either a QuickBars camera alias or a Home Assistant camera entity (with MJPEG URL). You may also provide a direct RTSP URL.",
       "fields": {
         "device_id": {
           "name": "Target TV (optional)",
-          "description": "Limit to a specific QuickBars device"
+          "description": "Target a specific QuickBars device. If omitted, broadcasts to all connected QuickBars devices."
+        },
+        "camera_alias": {
+          "name": "Camera alias (QuickBars)",
+          "description": "Camera alias as configured in the QuickBars TV app (Manage Saved Entities). Use this or camera_entity."
+        },
+        "camera_entity": {
+          "name": "Camera entity",
+          "description": "Home Assistant camera entity that is imported into the QuickBars TV app and has an MJPEG URL. Use this or camera_alias."
+        },
+        "rtsp_url": {
+          "name": "RTSP URL (optional)",
+          "description": "Direct RTSP URL (e.g., rtsp://user:pass@host:554/path). If provided with camera_entity/alias, RTSP is preferred for this request. You may also use only rtsp_url (no entity/alias). Use rtsp:// (rtsps:// not supported). Credentials with special characters like @ or : are handled automatically."
+        },
+        "size": {
+          "name": "Size preset",
+          "description": "small, medium, or large. If omitted, uses the camera's saved default."
+        },
+        "size_px": {
+          "name": "Custom size (pixels)",
+          "description": "Object with width/height, for example: {\"w\":640,\"h\":360}. Use instead of size."
+        },
+        "position": {
+          "name": "Position",
+          "description": "Screen corner: top_left, top_right, bottom_left, or bottom_right."
+        },
+        "show_title": {
+          "name": "Show camera title",
+          "description": "true/false. If omitted, uses the saved setting in the TV app."
+        },
+        "auto_hide": {
+          "name": "Auto-hide (seconds)",
+          "description": "Seconds before the overlay hides. 0 = never (requires manual toggle). If omitted, uses the app default."
+        }
+      }
+    },
+
+    "notify": {
+      "name": "Send notification (TV)",
+      "description": "Display a rich notification on the TV with optional title, icon, image, sound, and action buttons.",
+      "fields": {
+        "device_id": {
+          "name": "Target TV (optional)",
+          "description": "Target a specific QuickBars device. If omitted, broadcasts to all connected QuickBars devices."
         },
         "title": {
           "name": "Title",
           "description": "Title of the notification."
         },
-        "message": { "name": "Message", "description": "Main message text." },
+        "message": {
+          "name": "Message",
+          "description": "Main text content of the notification."
+        },
         "actions": {
           "name": "Actions",
-          "description": "List of {id, label} objects."
-        },
-        "color": {
-          "name": "Overlay color",
-          "description": "RGB color object."
-        },
-        "transparency": {
-          "name": "Transparency",
-          "description": "0.0 = opaque, 1.0 = fully transparent."
-        },
-        "mdi_icon": {
-          "name": "Icon",
-          "description": "Pick an MDI icon (e.g., mdi:bell)."
-        },
-        "image": {
-          "name": "Image source",
-          "description": "Provide url/path/media_id object."
-        },
-        "image_media": {
-          "name": "Image (Media Browser)",
-          "description": "Pick an image from the Media Browser."
-        },
-        "sound": {
-          "name": "Sound",
-          "description": "Provide url/path/media_id object."
-        },
-        "sound_media": {
-          "name": "Sound (Media Browser)",
-          "description": "Pick an audio file from the Media Browser."
-        },
-        "sound_volume_percent": {
-          "name": "Sound volume (%)",
-          "description": "0–200%. 100% = device volume."
+          "description": "List of action objects: { id, label }."
         },
         "length": {
           "name": "Length (seconds)",
-          "description": "How long to show the notification."
+          "description": "How long to show the notification. Default 6."
+        },
+        "color": {
+          "name": "Overlay color",
+          "description": "Hex color (e.g., #8cd0e6)."
+        },
+        "transparency": {
+          "name": "Transparency",
+          "description": "0.0 = opaque, 1.0 = fully transparent. Default is 0."
+        },
+        "mdi_icon": {
+          "name": "Icon",
+          "description": "MDI icon near the title (e.g., mdi:bell)."
+        },
+        "image": {
+          "name": "Image source",
+          "description": "Provide an image via url (https://example.com/pic.jpg), path (relative to `/config/www`), or media_id. Choose any of the 3 options, or `image_media`."
+        },
+        "image_media": {
+          "name": "Image (Media Browser)",
+          "description": "Select an image directly from Home Assistant's Media Browser."
+        },
+        "sound": {
+          "name": "Sound",
+          "description": "Provide a sound via url (https://example.com/file.mp3), path (relative to `/config/www`), or media_id. Choose any of the 3 options, or `sound_media`."
+        },
+        "sound_media": {
+          "name": "Sound (Media Browser)",
+          "description": "Select a sound directly from Home Assistant's Media Browser."
+        },
+        "sound_volume_percent": {
+          "name": "Sound volume (%)",
+          "description": "0–200. 100 = TV system volume; >100 uses software boost and may distort."
         },
         "interrupt": {
           "name": "Interrupt",
-          "description": "Hide any existing notification and show this immediately."
+          "description": "If true, replaces any currently visible notification immediately."
         },
         "position": {
           "name": "Position",
-          "description": "Screen position of the notification."
-        }
-      }
-    },
-    "quickbar_toggle": {
-      "name": "Toggle QuickBar",
-      "description": "Open/close a QuickBar by alias.",
-      "fields": {
-        "device_id": {
-          "name": "Target TV (optional)",
-          "description": "Limit to a specific QuickBars device"
-        },
-        "alias": {
-          "name": "Alias",
-          "description": "QuickBar alias defined in the Android TV app."
+          "description": "top_left, top_right, bottom_left, or bottom_right. Default top_right."
         }
       }
     }

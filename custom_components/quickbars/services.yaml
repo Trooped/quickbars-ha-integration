@@ -16,6 +16,10 @@ camera_toggle:
         entity:
           domain: camera
       required: false
+    rtsp_url:
+      selector:
+        text:
+      required: false
     size:
       selector:
         select:
@@ -37,13 +41,13 @@ camera_toggle:
       required: false
       default: true
     auto_hide:
+      default: 10
       selector:
         number:
           min: 0
           max: 300
-          mode: slider
+          unit_of_measurement: "seconds"
       required: false
-      default: 10
 
 notify:
   # Show a rich notification
@@ -115,21 +119,18 @@ notify:
       required: false
       default: 100
     length:
-      default: 6
+      default: 10
       selector:
         number:
-          min: 3
-          max: 120
-          step: 1
-          mode: slider
-          unit_of_measurement: s
+          min: 0
+          max: 300
+          unit_of_measurement: "seconds"
       required: false
-      default: 5
     interrupt:
+      default: false
       selector:
         boolean:
       required: false
-      default: false
     position:
       selector:
         select:

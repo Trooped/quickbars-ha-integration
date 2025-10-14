@@ -54,6 +54,7 @@ CAMERA_SCHEMA = vol.Schema(
         # Exactly one of these:
         vol.Exclusive("camera_alias", "cam_id"): cv.string,
         vol.Exclusive("camera_entity", "cam_id"): cv.entity_id,
+        vol.Optional("rtsp_url"): cv.string,
         # Optional rendering options
         vol.Optional("position"): vol.In(POS_CHOICES),
         # Either preset size OR custom size in px
@@ -201,6 +202,8 @@ async def _handle_camera(hass: HomeAssistant, call: ServiceCall) -> None:
         data["camera_alias"] = alias
     if entity:
         data["camera_entity"] = entity
+
+    data["rtsp_url"] = call.data.get("rtsp_url")
 
     # options
     pos = call.data.get("position")

@@ -84,26 +84,42 @@ data:
 
 ### Action: `quickbars.camera_toggle` 
 
-Shows or hides a picture-in-picture camera overlay on the TV. The camera entity must first be imported into the QuickBars app via the options flow and must have an MJPEG stream URL. You can identify the camera using its alias (configured in the TV app) or its Home Assistant entity ID.
+Shows or hides a picture-in-picture camera overlay on the TV. The camera entity must first be imported into the QuickBars app via the options flow and must have an MJPEG stream URL. You can display the camera using its alias (configured in the TV app) or its Home Assistant entity ID. You may also use a direct RTSP URL.
 
 - **Fields**
   - `device_id` *(optional)* - Target a specific QuickBars device. If omitted, broadcasts to all connected QuickBars devices.
   - `camera_alias` *(optional)* - Camera Alias as configured in QuickBars TV app (in the Manage Saved Entities screen). You must use this or `camera_entity`.
   - `camera_entity` *(optional)* - The Home Assistant camera entity ID. You must use this or `camera_alias`.
+  - `camera_entity` *(optional)* - An **RTSP** URL (rtsp://…) to play directly via the TV app.
+    - If you provide both `camera_entity`/`camera_alias` and `rtsp_url`, the app will prefer RTSP for that request.
+    - You may also provide only `rtsp_url` (no entity/alias) for an ad-hoc stream.
+    - Use rtsp:// (TLS rtsps:// isn’t supported).
+    - Credentials may be included (for example, rtsp://user:pass@host:554/path). If your username/password contains special characters like @ or :, the app will handle encoding automatically.
+    - You can create a script that calls this RTSP url PiP display action, import it into the app and use it as a normal trigger (to imitate the standard MJPEG stream functionality).
   - `size` *(optional)* - The size of the overlay. Can be *small*, *medium*, or *large*. If not specified, uses the default size configured for the camera in the TV app. You can use this or `size_px`.
   - `size_px` *(optional)* - A custom size for the overlay, specified as a map with width and height in pixels (*for example*, `{"w": 640, "h": 360}`). Use instead of `size`.
   - `position` *(optional)* - The position of the overlay on the screen. Can be *top_left*, *top_right*, *bottom_left*, or *bottom_right*. If not specified, uses the position configured to the camera entity on the TV app.
   - `show_title` *(optional)* - A boolean (`true`/`false`) to show the camera's name on the stream. If not specified, uses the show_title configured to the camera entity on the TV app.
   - `auto_hide` *(optional)* - The number of seconds before the overlay automatically hides. Set to `0` to disable auto-hide. If not specified, uses the default setting from the TV app.
 
-**Example**
+**Examples**
 
 ```yaml
-# Display a camera PiP on the TV
+# Display an MJPEG camera PiP on the TV
 action: quickbars.camera_toggle
 data:
   device_id: 123456789ABCDEF
   camera_entity: camera.driveway_camera
+  size: large
+  position: bottom_left
+```
+
+```yaml
+# Display an RTSP stream (no camera entity needed)
+action: quickbars.camera_toggle
+data:
+  device_id: 123456789ABCDEF
+  rtsp_url: rtsp://user:pass@192.168.1.200:554/stream1 # Enter your RTSP url, determined by your camera.
   size: large
   position: bottom_left
 ```
@@ -126,7 +142,7 @@ Displays a rich notification on the TV, with an optional title, icon, image, sou
     -   `path: "folder/file.jpg"`
     -   `media_id: "media-source://media_source/local/folder/file.jpg"`
   - `image_media` *(optional)* - An alternative to image that allows you to select an image directly from Home Assistant's Media Browser.
-  - `sound` *(optional)* - Provide a sound via `url`, `path` (relative to `/config/www`), or `media_id`. Choose any of the 3 options, or `sound_media` Examples:
+  - `sound` *(optional)* - Provide a sound via `url`, `path` (relative to `/config/www`), or `media_id`. Choose any of the 3 options, or `sound_media`. Examples:
     -   `url: "https://example.com/file.mp3"`
     -   `path: "chimes/ding.mp3"`
     -   `media_id: "media-source://media_source/local/chimes/ding.mp3"`
@@ -247,7 +263,7 @@ The QuickBars integration uses a combination of communication methods for effici
 
   -  #### Resolution:
      1. In the QuickBars TV app settings, ensure that the "Persistent background connection" option is enabled. This allows Home Assistant to send commands to the app even when it's not in the foreground.
-     2. for Cameras - verify the camera has a valid MJPEG stream, and it's imported to the TV app. 
+     2. for Cameras - verify the camera has a valid MJPEG stream, and it's imported to the TV app (if using a regular camera entity with MJPEG stream, and not RTSP url). 
 
 ## Removing the integration
 

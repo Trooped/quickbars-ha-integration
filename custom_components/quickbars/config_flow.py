@@ -41,7 +41,7 @@ from quickbars_bridge.qb import (
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry, OptionsFlowWithConfigEntry
+from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import State, callback
 from homeassistant.data_entry_flow import FlowResult as ConfigFlowResult
@@ -276,17 +276,16 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> QuickBarsOptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> "QuickBarsOptionsFlow":
         """Expose per-entry options flow so the Configure button appears."""
-        return QuickBarsOptionsFlow(config_entry)
+        return QuickBarsOptionsFlow()
 
 
-class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
+class QuickBarsOptionsFlow(OptionsFlow):
     """Options flow for QuickBars."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
+    def __init__(self) -> None:
         """Initialize options flow."""
-        super().__init__(config_entry)
         self._snapshot: dict[str, Any] | None = None  # latest snapshot from TV
         self._qb_index: int | None = None  # which quickbar is being edited
         self._entity_id: str | None = None
@@ -411,15 +410,6 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                 },
             )
 
-        def _display_name(hass, entity_id: str) -> str:
-            st: State | None = hass.states.get(entity_id)
-            if st and st.name:
-                return (
-                    st.name
-                )  # HA's user-facing name; already prefers attributes.friendly_name
-            # fallback if somehow missing
-            return entity_id.split(".", 1)[-1]
-
         # Build replacement list
         selected: list[str] = list(user_input.get("saved") or [])
 
@@ -449,6 +439,7 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                 errors={"base": "tv_unreachable"},
                 description_placeholders={"hint": f"{type(e).__name__}: {e}"},
             )
+        
 
     # ---------- 2) Manage Saved Entities (placeholder for now) ----------
     async def async_step_manage_saved_pick(
@@ -461,16 +452,23 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
             return self._error_form(
                 "manage_saved_pick", Exception("snapshot"), hint="Snapshot unavailable"
             )
+        
+        def _pick_schema(options):
+            """Build pick schema from options list."""
+            return vol.Schema({
+                vol.Optional("entity"): selector({
+                    "select": {
+                        "options": options,  # [{"value": "...", "label": "..."}]
+                        "multiple": False,
+                        "mode": "dropdown",
+                    }
+                })
+            })
 
         options = saved_pick_options(self._snapshot)
-
-        # Default to previously selected or first
-        default_id = getattr(self, "_entity_id", None)
-        if default_id not in {e["value"] for e in options}:
-            default_id = options[0]["value"]
+        schema = _pick_schema(options)
 
         if user_input is None:
-            schema = schema_manage_saved_pick(options, default_id)
             return self.async_show_form(
                 step_id="manage_saved_pick",
                 data_schema=schema,
@@ -480,8 +478,11 @@ class QuickBarsOptionsFlow(OptionsFlowWithConfigEntry):
                 },
             )
 
-        # Persist selection and continue to the editor
-        self._entity_id = user_input.get("entity")
+        # Empty submission -> re-show pick step
+        if "entity" not in user_input or not user_input["entity"]:
+            return self.async_show_form(step_id="manage_saved_pick", data_schema=schema)
+
+        self._entity_id = user_input["entity"]
         return await self.async_step_manage_saved()
 
     async def async_step_manage_saved(

@@ -70,11 +70,47 @@
         "title": "QuickBars Editor",
         "description": "Pull / Edit / Push"
       },
+      "qb_pick": {
+        "data": {
+          "quickbar": "QuickBar"
+        },
+        "data_description": {
+          "quickbar": "QuickBar"
+        }
+      },
       "qb_manage": {
         "title": "QuickBars Options",
         "description": "Configure automatic close domains and QuickBar behavior",
         "data": {
+          "quickbar_name": "QuickBar name",
+          "saved_entities": "Saved entities",
+          "show_name_on_overlay": "Show name on overlay",
+          "show_time_on_quickbar": "Show time on QuickBar",
+          "ha_trigger_alias": "QuickBar trigger alias",
           "auto_close_domains": "Auto-close domains",
+          "position": "Position",
+          "use_grid_layout": "Use grid layout",
+          "background_opacity": "Background opacity",
+          "use_custom_bg": "Use custom background color",
+          "bg_rgb": "Background color",
+          "use_custom_on_state": "Use custom on-state color",
+          "on_rgb": "On-state color",
+          "close_delay_sec": "Close delay (seconds)"
+        },
+        "data_description": {
+          "quickbar_name": "QuickBar name",
+          "saved_entities": "Saved entities",
+          "show_name_on_overlay": "Show name on overlay",
+          "show_time_on_quickbar": "Show time on QuickBar",
+          "ha_trigger_alias": "QuickBar trigger alias",
+          "auto_close_domains": "Auto-close domains",
+          "position": "Position",
+          "use_grid_layout": "Use grid layout",
+          "background_opacity": "Background opacity",
+          "use_custom_bg": "Use custom background color",
+          "bg_rgb": "Background color",
+          "use_custom_on_state": "Use custom on-state color",
+          "on_rgb": "On-state color",
           "close_delay_sec": "Close delay (seconds)"
         }
       },
@@ -83,13 +119,42 @@
         "description": "Pick entities to export to QuickBars",
         "data": {
           "saved": "Entities"
+        },
+        "data_description": {
+          "saved": "Entities"
+        }
+      },
+      "menu": {
+        "data":{
+          "action": "Menu action"
+        },
+        "data_description": {
+          "action": "Menu action"
+        }
+      },
+      "manage_saved_pick": {
+        "data": {
+          "entity": "Entity"
+        },
+        "data_description": {
+          "entity": "Entity"
+        }
+      },
+      "manage_saved": {
+        "data":{
+          "display_name": "Display name"
+        },
+        "data_description": {
+          "display_name": "Display name"
         }
       }
     },
     "error": {
       "ws_error": "Could not communicate with QuickBars on the TV.",
       "invalid_selection": "Please select at least one entity.",
-      "no_entities": "No entities available to export."
+      "no_entities": "No entities available to export.",
+      "tv_unreachable": "TV not reachable. Make sure the app is open (foreground).",
+      "name_taken": "A QuickBar with that name already exists."
     }
   },
   "services": {

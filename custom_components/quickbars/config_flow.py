@@ -277,7 +277,7 @@ class QuickBarsOptionsFlow(OptionsFlow):
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
-        super().__init__(config_entry)
+        self.config_entry = config_entry
         self._snapshot: dict[str, Any] | None = None  # latest snapshot from TV
         self._qb_index: int | None = None  # which quickbar is being edited
         self._entity_id: str | None = None

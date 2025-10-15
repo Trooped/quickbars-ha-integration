@@ -1,11 +1,9 @@
 """Constants for the QuickBars integration."""
 
 # Attribute keys used by services/actions
-"General"
 ATTR_ALIAS = "alias"
 ATTR_DEVICE_ID = "device_id"
 
-"Camera Specific"
 ATTR_CAMERA_ALIAS = "camera_alias"
 ATTR_CAMERA_ENTITY = "camera_entity"
 ATTR_RTSP_URL = "rtsp_url"

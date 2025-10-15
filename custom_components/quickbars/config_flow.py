@@ -269,15 +269,14 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Expose per-entry options flow so the Configure button appears."""
-        return QuickBarsOptionsFlow(config_entry)
+        return QuickBarsOptionsFlow()
 
 
 class QuickBarsOptionsFlow(OptionsFlow):
     """Options flow for QuickBars."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
+    def __init__(self) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
         self._snapshot: dict[str, Any] | None = None  # latest snapshot from TV
         self._qb_index: int | None = None  # which quickbar is being edited
         self._entity_id: str | None = None

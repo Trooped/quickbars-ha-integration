@@ -54,7 +54,6 @@ type QuickBarsConfigEntry = config_entries.ConfigEntry["QuickBarsRuntime"]
 @dataclass(slots=True)
 class QuickBarsRuntime:
     """Runtime data for a QuickBars config entry."""
-
     device_id: str
     presence: _Presence
     coordinator: QuickBarsCoordinator

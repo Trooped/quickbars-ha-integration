@@ -56,6 +56,7 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._port: int | None = None
         self._pair_sid: str | None = None
         self._paired_name: str | None = None
+        self._props: dict[str, Any] | None = None
         # Options flow will set these, but keeping for type safety:
         self._snapshot: dict[str, Any] | None = None
         self._entity_id: str | None = None
@@ -201,7 +202,7 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 updates={CONF_HOST: host, CONF_PORT: port, CONF_ID: unique}
             )
 
-        self._host, self._port, self.props = host, port, props
+        self._host, self._port, self._props = host, port, props
         self.context["title_placeholders"] = {"name": title}
 
         return self.async_show_form(

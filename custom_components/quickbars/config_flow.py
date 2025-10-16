@@ -8,11 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientError
 from quickbars_bridge import QuickBarsClient
-from quickbars_bridge.events import (
-    ws_entities_replace,
-    ws_get_snapshot,
-    ws_ping,
-)
+from quickbars_bridge.events import ws_entities_replace, ws_get_snapshot, ws_ping
 from quickbars_bridge.hass_flow import (
     ALLOWED_ENTITY_DOMAINS,
     decode_zeroconf,
@@ -21,7 +17,6 @@ from quickbars_bridge.hass_flow import (
     schema_expose,
     schema_token,
 )
-
 import voluptuous as vol
 
 from homeassistant import config_entries

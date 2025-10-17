@@ -30,7 +30,6 @@ _LOGGER = logging.getLogger(__name__)
 # Typed config entry for this integration
 type QuickBarsConfigEntry = config_entries.ConfigEntry["QuickBarsRuntime"]
 
-
 @dataclass(slots=True)
 class QuickBarsRuntime:
     """Runtime data for a QuickBars config entry."""
@@ -39,7 +38,6 @@ class QuickBarsRuntime:
     presence: _Presence
     coordinator: QuickBarsCoordinator
     unsub_action: Callable[[], None] | None
-
 
 class _Presence:
     """Zeroconf: track the app instance and keep host/port fresh."""
@@ -149,7 +147,6 @@ def _entry_for_device(
         return entries[0]
     return None  # ambiguous or none configured
 
-
 async def _svc_notify(hass: HomeAssistant, call: ServiceCall) -> None:
     """Service handler for notify."""
     target_device_id = call.data.get(ATTR_DEVICE_ID)
@@ -178,12 +175,10 @@ async def _svc_notify(hass: HomeAssistant, call: ServiceCall) -> None:
             },
         )
 
-
 async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
     """Register global service actions so they exist even without entries."""
     hass.services.async_register(DOMAIN, "notify", partial(_svc_notify, hass))
     return True
-
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: config_entries.ConfigEntry
@@ -233,7 +228,6 @@ async def async_setup_entry(
     )
     return True
 
-
 async def async_unload_entry(
     hass: HomeAssistant, entry: config_entries.ConfigEntry
 ) -> bool:
@@ -246,12 +240,10 @@ async def async_unload_entry(
             rt.unsub_action()
     return True
 
-
 async def async_remove_entry(
     hass: HomeAssistant, entry: config_entries.ConfigEntry
 ) -> None:
     """Called after an entry is removed (after unload)."""
-    # Gentle reminder for the TV app
     persistent_notification.async_create(
         hass,
         (

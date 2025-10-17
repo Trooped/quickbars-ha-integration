@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-
 def schema_host_port(default_host: str | None, default_port: int | None) -> vol.Schema:
     """Return schema for host/port input form."""
     return vol.Schema(
@@ -35,7 +34,6 @@ def schema_host_port(default_host: str | None, default_port: int | None) -> vol.
             ): int,
         }
     )
-
 
 class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the QuickBars config flow."""
@@ -52,7 +50,7 @@ class QuickBarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._entity_id: str | None = None
         self._qb_index: int | None = None
 
-    # ---------- Manual path ----------
+    # Manual Path
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
